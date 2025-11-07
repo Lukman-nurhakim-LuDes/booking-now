@@ -952,7 +952,7 @@
                     return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
                 })
                 .reduce((sum, b) => sum + (b.totalPrice || 0), 0);
-        }
+        }; // <-- FIX: Function was cut off here
 
         window.switchView = (viewId) => {
             appState.currentView = viewId;
@@ -987,12 +987,24 @@
 
         // --- Event Listeners and Setup ---
         window.onload = () => {
-            // Service Worker registration is intentionally skipped in this environment
-            // to avoid the "The URL protocol of the script (':') is not supported" TypeError 
-            // which frequently occurs in sandboxed iframes.
+            // PWA / SERVICE WORKER REGISTRATION (DIKOMENTARI UNTUK MENGHINDARI ERROR DI IFRAME)
+            /*
             if ('serviceWorker' in navigator) {
-                console.warn('Service Worker registration skipped to prevent console errors in sandboxed environment.');
+                try {
+                    navigator.serviceWorker.register('service-worker.js')
+                        .then(reg => console.log('Service Worker registered.', reg))
+                        .catch(err => {
+                            if (err.message && err.message.includes('protocol of the script (:') && err.name === 'TypeError') {
+                                console.warn('Service Worker registration failed due to sandboxed environment, PWA installability may be affected.');
+                            } else {
+                                console.error('Service Worker registration failed:', err);
+                            }
+                        });
+                } catch (e) {
+                    console.warn("Service Worker registration failed synchronously:", e.message);
+                }
             }
+            */
 
             initializeAppAndAuth();
             
