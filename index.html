@@ -45,13 +45,20 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- KONFIGURASI FIREBASE ANDA (Menggunakan variabel global yang aman) ---
-        // Menggunakan __firebase_config jika ada, jika tidak, inisialisasi kosong.
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        // --- KONFIGURASI FIREBASE (DIKEMBALIKAN KE HARDCODED UNTUK STABILITAS LINGKUNGAN INI) ---
+        // Catatan: Di lingkungan produksi, gunakan konfigurasi yang dimuat dari variabel lingkungan.
+        const firebaseConfig = {
+            apiKey: "AIzaSyAKAjjpQHnHs_vQchvbYeuay_ZM1GQSPJc",
+            authDomain: "booking-clien.firebaseapp.com",
+            projectId: "booking-clien",
+            storageBucket: "booking-clien.firebasestorage.app",
+            messagingSenderId: "341981835337",
+            appId: "1:341981835337:web:ded90cf55794bb9c6d8f98"
+        };
         
         // Global Variables
-        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId/default ID
-        const appId = typeof __app_id !== 'undefined' ? __app_id : (firebaseConfig.projectId || 'default-app-id');
+        // Menggunakan projectId hardcoded sebagai fallback appId
+        const appId = firebaseConfig.projectId;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --- AKHIR KONFIGURASI FIREBASE ---
 
@@ -101,9 +108,9 @@
                 // Set Firestore logging for debugging
                 setLogLevel('debug');
                 
-                // Check if firebaseConfig is defined and not empty, otherwise initialization will fail
-                if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
-                     throw new Error("Firebase configuration not found. Please ensure __firebase_config is correctly set.");
+                // Pengecekan konfigurasi yang lebih sederhana karena kita hardcode untuk lingkungan ini.
+                if (!firebaseConfig.apiKey) {
+                     throw new Error("Firebase configuration API Key is missing.");
                 }
 
                 app = initializeApp(firebaseConfig);
@@ -952,7 +959,7 @@
                     return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
                 })
                 .reduce((sum, b) => sum + (b.totalPrice || 0), 0);
-        }; // <-- FIX: Function was cut off here
+        };
 
         window.switchView = (viewId) => {
             appState.currentView = viewId;
