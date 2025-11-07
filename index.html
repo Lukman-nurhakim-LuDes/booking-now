@@ -45,21 +45,15 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- KONFIGURASI FIREBASE ANDA (FIXED) ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyAKAjjpQHnHs_vQchvbYeuay_ZM1GQSPJc",
-            authDomain: "booking-clien.firebaseapp.com",
-            projectId: "booking-clien",
-            storageBucket: "booking-clien.firebasestorage.app",
-            messagingSenderId: "341981835337",
-            appId: "1:341981835337:web:ded90cf55794bb9c6d8f98"
-        };
-        // --- AKHIR KONFIGURASI FIREBASE ---
-
+        // --- KONFIGURASI FIREBASE ANDA (Menggunakan variabel global yang aman) ---
+        // Menggunakan __firebase_config jika ada, jika tidak, inisialisasi kosong.
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        
         // Global Variables
-        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId sebagai fallback ID
-        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
+        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId/default ID
+        const appId = typeof __app_id !== 'undefined' ? __app_id : (firebaseConfig.projectId || 'default-app-id');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- AKHIR KONFIGURASI FIREBASE ---
 
 
         // Initialize Firebase
@@ -106,6 +100,12 @@
             try {
                 // Set Firestore logging for debugging
                 setLogLevel('debug');
+                
+                // Check if firebaseConfig is defined and not empty, otherwise initialization will fail
+                if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+                     throw new Error("Firebase configuration not found. Please ensure __firebase_config is correctly set.");
+                }
+
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -127,7 +127,12 @@
                     } else {
                         // Handle initial token sign-in or fallback to anonymous if no user/token
                         if (!isAuthReady && initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken).catch(() => signInAnonymously(auth));
+                            await signInWithCustomToken(auth, initialAuthToken).catch((e) => {
+                                console.warn("Custom token sign-in failed, attempting anonymous sign-in:", e);
+                                return signInAnonymously(auth);
+                            });
+                        } else if (!isAuthReady) {
+                             await signInAnonymously(auth); // Fallback to anonymous sign-in if no token and not yet ready
                         } else {
                             // If no one is signed in, force show login form
                             document.getElementById('main-app').classList.add('hidden');
@@ -145,6 +150,8 @@
                 console.error("Error during Firebase initialization or sign-in:", error);
                 appState.authError = "Gagal inisialisasi Firebase atau autentikasi. Lihat konsol untuk detail.";
                 appState.isLoading = false;
+                document.getElementById('data-error').innerText = appState.authError;
+                document.getElementById('loading-screen').classList.remove('hidden');
                 renderUI();
             }
         };
@@ -307,7 +314,6 @@
                     showMessage("Pemesanan baru berhasil disimpan!", "success");
                 } else {
                     // Update the bookingDate field only if it exists (for compatibility)
-                    if (bookingRef.bookingDate) dataToSave.bookingDate = Timestamp.fromDate(new Date()); 
                     await updateDoc(bookingRef, dataToSave);
                     showMessage("Pemesanan berhasil diperbarui!", "success");
                 }
@@ -400,7 +406,7 @@
             const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
             const invoiceContentId = `invoice-content-${booking.id}`;
 
-
+            // TIDAK MENGGUNAKAN PLACEHOLDER
             const invoiceHTML = `
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
@@ -412,6 +418,7 @@
                                     <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
                                     <p class="text-sm text-gray-500">PixelMore Studio Management</p>
                                 </div>
+                                <!-- Menggunakan URL lokal images/icon-192.png -->
                                 <img src="images/icon-192.png" alt="Logo Studio" class="w-12 h-12 object-cover rounded-lg">
                             </div>
                             
@@ -538,15 +545,18 @@
                 
                 // Styling for booked days
                 const bookingDot = dayBookings.length > 0
-                    ? `<div class="absolute bottom-1 right-1 h-2 w-2 rounded-full ${dayBookings.length > 2 ? 'bg-red-500' : 'bg-blue-500'}"></div>`
+                    ? `<div class="absolute bottom-1 right-1 h-2 w-2 rounded-full ${dayBookings.length > 2 ? 'bg-red-500' : 'bg-blue-500'}" title="${dayBookings.length} bookings"></div>`
                     : '';
-
-                // Booking list for modal
-                const bookingListHTML = dayBookings.map(b => `
+                
+                // Show up to 2 booking names in the cell
+                const bookingListHTML = dayBookings.slice(0, 2).map(b => `
                     <div class="text-xs p-1 mt-1 bg-blue-50 text-blue-800 rounded-md border border-blue-200 hover:bg-blue-100 cursor-pointer" onclick="showInvoice('${b.id}')">
-                        ${b.clientName} - ${b.packageName}
+                        ${b.clientName.substring(0, 10)}...
                     </div>
                 `).join('');
+                
+                const moreBookings = dayBookings.length > 2 ? `<div class="text-xs text-center text-gray-500 mt-1">+${dayBookings.length - 2} lainnya</div>` : '';
+
 
                 daysHTML += `
                     <div class="p-1 h-24 border border-gray-200 relative ${todayClass} hover:bg-gray-50 transition duration-150 cursor-pointer group" onclick="showDayDetails(new Date('${dateToCheck.toISOString()}'), ${JSON.stringify(dayBookings).replace(/"/g, '&quot;')})">
@@ -554,6 +564,7 @@
                         ${bookingDot}
                         <div class="text-xs mt-1 space-y-0.5 max-h-16 overflow-y-auto">
                             ${bookingListHTML}
+                            ${moreBookings}
                         </div>
                     </div>
                 `;
@@ -685,7 +696,22 @@
                 const remaining = total - deposit;
                 document.getElementById('remaining-payment-input').value = remaining.toFixed(0);
                 document.getElementById('remaining-display').innerText = formatRupiah(remaining);
+                
+                const remainingDisplayEl = document.getElementById('remaining-display');
+                if (remaining <= 0) {
+                    remainingDisplayEl.classList.remove('text-red-600');
+                    remainingDisplayEl.classList.add('text-green-600');
+                } else {
+                    remainingDisplayEl.classList.remove('text-green-600');
+                    remainingDisplayEl.classList.add('text-red-600');
+                }
             };
+            
+            // Remove previous listeners (to prevent duplication on re-render)
+            document.getElementById('total-price-input').oninput = null;
+            document.getElementById('deposit-input').oninput = null;
+            packageSelect.onchange = null;
+
 
             document.getElementById('total-price-input').oninput = calculateRemaining;
             document.getElementById('deposit-input').oninput = calculateRemaining;
@@ -830,7 +856,7 @@
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatDate(b.eventDate)}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatRupiah(b.totalPrice)}</td>
                     <td class="px-4 py-3 whitespace-nowrap">
-                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${b.status === 'Completed' ? 'bg-green-100 text-green-800' : b.status === 'Paid' ? 'bg-indigo-100 text-indigo-800' : b.status === 'Booked' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${b.remainingPayment <= 0 ? 'bg-green-100 text-green-800' : b.status === 'Paid' ? 'bg-indigo-100 text-indigo-800' : b.status === 'Booked' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}">
                             ${b.status}
                         </span>
                     </td>
@@ -1061,7 +1087,11 @@
     <!-- 0. Login View -->
     <div id="login-view" class="hidden fixed inset-0 bg-gray-100 flex items-center justify-center p-4 z-40">
         <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <h2 class="text-3xl font-bold text-center text-orange-600 mb-6">Studio Manager Pro Login</h2>
+            <div class="flex flex-col items-center mb-6">
+                <!-- Logo Menggunakan images/icon-512.png -->
+                <img src="images/icon-512.png" alt="PixelMore Logo" class="w-16 h-16 object-cover rounded-lg mb-2">
+                <h2 class="text-3xl font-bold text-center text-orange-600">PixelMore Studio Login</h2>
+            </div>
             <form id="login-form" class="space-y-4">
                 <p class="text-sm text-gray-600 text-center">Silakan login atau daftar untuk mulai menggunakan aplikasi.</p>
                 <div class="space-y-1">
@@ -1087,7 +1117,11 @@
         <!-- Header & Navigation -->
         <header class="bg-white shadow-md sticky top-0 z-10">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-                <h1 class="text-2xl font-extrabold text-orange-600">Studio Manager Pro</h1>
+                <div class="flex items-center space-x-2">
+                    <!-- Logo Menggunakan images/icon-192.png -->
+                    <img src="images/icon-192.png" alt="PixelMore Logo" class="w-8 h-8 object-cover rounded-lg">
+                    <h1 class="text-2xl font-extrabold text-gray-800">PixelMore Studio</h1>
+                </div>
                 <nav class="flex space-x-6 text-gray-600 items-center">
                     <button id="nav-dashboard" onclick="switchView('dashboard')" class="nav-link py-2 transition duration-150">Dashboard</button>
                     <button id="nav-calendar" onclick="switchView('calendar')" class="nav-link py-2 transition duration-150">Kalender</button>
