@@ -1,5 +1,5 @@
 // Nama cache
-const CACHE_NAME = 'studio-manager-v1';
+const CACHE_NAME = 'PixelMore Studio';
 
 // Daftar file yang akan di-cache
 const urlsToCache = [
