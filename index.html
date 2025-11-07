@@ -61,15 +61,15 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --- AKHIR KONFIGURASI FIREBASE ---
 
-        // KONSTANTA INFO STUDIO (TEMPAT EDIT ALAMAT & TEKS FOOTER FAKTUR)
-        const STUDIO_INFO = {
+        // KONSTANTA INFO STUDIO DEFAULT (AKAN DITIMPA DARI FIREBASE)
+        let STUDIO_INFO_DEFAULT = {
             name: "PixelMore Studio",
             address: "Jl. Kreatif No. 123, Jakarta",
             phone: "0812-3456-7890",
             email: "hello@pixelmore.co",
-            // EDIT TEKS FOOTER DI SINI
             footerDisclaimer: "Harap selesaikan pembayaran ke rekening resmi PixelMore Studio.",
         };
+        // NOTE: STUDIO_INFO_DEFAULT dihapus dari scope global dan dipindahkan ke appState.studioProfile
 
         // Initialize Firebase
         let app, db, auth, userId;
@@ -78,11 +78,14 @@
         // Configuration
         const BOOKINGS_COLLECTION = 'bookings';
         const PACKAGES_COLLECTION = 'packages';
+        const STUDIO_PROFILE_COLLECTION = 'studioProfile';
+        const STUDIO_PROFILE_DOC_ID = 'mainProfile';
 
         // State Management
         let appState = {
             bookings: [],
             packages: [],
+            studioProfile: {...STUDIO_INFO_DEFAULT}, // Set default value
             currentView: 'dashboard',
             isLoading: true,
             authError: null,
@@ -106,11 +109,18 @@
 
         const getCollectionPath = (collectionName, isPublic = false) => {
             if (isPublic) {
+                // Gunakan lokasi publik untuk data profil studio agar mudah diakses
                 return `/artifacts/${appId}/public/data/${collectionName}`;
             }
             // Use userId only if authenticated. If anonymous/platform token, it still works.
             return `/artifacts/${appId}/users/${userId || 'anonymous'}/${collectionName}`;
         };
+        
+        // Listener subscriptions to be stored and unsubscribed if needed
+        let unsubscribeStudioProfile = null;
+        let unsubscribePackages = null;
+        let unsubscribeBookings = null;
+
 
         // --- Firebase Initialization and Authentication ---
         const initializeAppAndAuth = async () => {
@@ -128,14 +138,20 @@
                     if (user && user.uid) {
                         userId = user.uid;
                         authElement.innerHTML = `<span class="text-sm font-medium text-green-600">Logged in as: ${user.email || 'Anonymous User'}</span>`;
-                        isAuthReady = true;
                         
+                        // Periksa apakah ini adalah otentikasi pertama (untuk menghindari duplikasi listener)
+                        if (!isAuthReady) {
+                            isAuthReady = true;
+                            console.log("Authentication successful. User ID:", userId);
+                            // Panggil fungsi yang membutuhkan otentikasi
+                            await fetchStudioProfile();
+                            await fetchInitialData();
+                        }
+
                         // Hide login, show main app
                         document.getElementById('main-app').classList.remove('hidden');
                         document.getElementById('login-view').classList.add('hidden');
                         
-                        console.log("Authentication successful. User ID:", userId);
-                        await fetchInitialData();
                     } else {
                         // Handle initial token sign-in or fallback to anonymous if no user/token
                         if (!isAuthReady && initialAuthToken) {
@@ -151,6 +167,11 @@
                             document.getElementById('login-view').classList.remove('hidden');
                             userId = null;
                             authElement.innerHTML = `<span class="text-sm font-medium text-red-600">Please log in.</span>`;
+                            
+                            // Unsubscribe listeners saat user logout
+                            if (unsubscribeStudioProfile) unsubscribeStudioProfile();
+                            if (unsubscribePackages) unsubscribePackages();
+                            if (unsubscribeBookings) unsubscribeBookings();
                         }
                     }
                     if (!isAuthReady) {
@@ -202,12 +223,38 @@
         };
 
         // --- Data Fetching and Real-time Listeners (onSnapshot) ---
+        
+        // 0. Studio Profile Listener (Dipisahkan)
+        const fetchStudioProfile = () => {
+             if (!db || !userId) return;
+             
+             const profileRef = doc(db, getCollectionPath(STUDIO_PROFILE_COLLECTION, true), STUDIO_PROFILE_DOC_ID);
+             // Hapus listener sebelumnya jika ada
+             if (unsubscribeStudioProfile) unsubscribeStudioProfile();
+             
+             unsubscribeStudioProfile = onSnapshot(profileRef, (docSnap) => {
+                 if (docSnap.exists()) {
+                     appState.studioProfile = { ...STUDIO_INFO_DEFAULT, ...docSnap.data() };
+                     console.log("Studio Profile updated:", appState.studioProfile);
+                 } else {
+                     // Jika belum ada, buat dokumen default
+                     setDoc(profileRef, STUDIO_INFO_DEFAULT, { merge: true }).catch(console.error);
+                 }
+                 renderProfileForm(); // Render form dengan data terbaru
+             }, (error) => {
+                 console.error("Error fetching studio profile:", error);
+                 appState.dataError = "Gagal mengambil data profil studio.";
+             });
+        }
+        
         const fetchInitialData = async () => {
-            if (!db || !isAuthReady || !userId) return;
+            if (!db || !userId) return;
             
             // 1. Packages Listener (Uses onSnapshot)
             const packagesQuery = collection(db, getCollectionPath(PACKAGES_COLLECTION));
-            onSnapshot(packagesQuery, (snapshot) => {
+            if (unsubscribePackages) unsubscribePackages();
+            
+            unsubscribePackages = onSnapshot(packagesQuery, (snapshot) => {
                 const packages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 appState.packages = packages;
                 console.log("Packages updated:", packages);
@@ -220,7 +267,9 @@
 
             // 2. Bookings Listener (Uses onSnapshot)
             const bookingsQuery = query(collection(db, getCollectionPath(BOOKINGS_COLLECTION)));
-            onSnapshot(bookingsQuery, (snapshot) => {
+            if (unsubscribeBookings) unsubscribeBookings();
+            
+            unsubscribeBookings = onSnapshot(bookingsQuery, (snapshot) => {
                 const bookings = snapshot.docs.map(doc => {
                     const data = doc.data();
                     // Convert Firestore Timestamp to Date objects or keep as-is for sorting
@@ -249,6 +298,37 @@
                 renderUI();
             });
         };
+        
+        // --- Profile Management Functions ---
+        const renderProfileForm = () => {
+            const profile = appState.studioProfile;
+            const form = document.getElementById('profile-form');
+            if (!form) return;
+
+            document.getElementById('profile-name').value = profile.name || '';
+            document.getElementById('profile-address').value = profile.address || '';
+            document.getElementById('profile-phone').value = profile.phone || '';
+            document.getElementById('profile-email').value = profile.email || '';
+            document.getElementById('profile-disclaimer').value = profile.footerDisclaimer || '';
+        };
+
+        const saveStudioProfile = async (formData) => {
+            if (!db || !userId) return showMessage("Silakan login untuk menyimpan data.", "error");
+            
+            try {
+                // Pastikan user terautentikasi sebelum mencoba menyimpan ke lokasi public
+                if (!auth.currentUser) {
+                    return showMessage("Harap login dengan akun berizin untuk menyimpan data profil.", "error");
+                }
+                const profileRef = doc(db, getCollectionPath(STUDIO_PROFILE_COLLECTION, true), STUDIO_PROFILE_DOC_ID);
+                await setDoc(profileRef, formData, { merge: true });
+                showMessage("Profil Studio berhasil diperbarui!", "success");
+            } catch (e) {
+                console.error("Error saving studio profile:", e);
+                showMessage("Gagal menyimpan profil studio: " + e.message, "error");
+            }
+        };
+
 
         // --- CRUD Operations (Simplified) ---
         const savePackage = async (packageData, packageId = null) => {
@@ -308,7 +388,7 @@
                 const deposit = parseFloat(formData.deposit || 0);
                 
                 // Total price minus discount
-                const finalPrice = totalPrice - discount;
+                const finalPrice = packagePrice - discount; // Pastikan menggunakan packagePrice awal untuk hitungan
                 
                 // Recalculate remaining based on final price
                 const remainingPayment = finalPrice - deposit;
@@ -317,12 +397,14 @@
                     clientName: formData.clientName,
                     clientPhone: formData.clientPhone,
                     packageName: formData.packageName,
-                    packagePrice: packagePrice,
+                    // Simpan packagePrice (harga awal) dan discount secara terpisah
+                    packagePrice: packagePrice, 
+                    discount: discount,
+                    // Simpan finalPrice (harga setelah diskon) sebagai totalPrice
+                    totalPrice: finalPrice, 
                     eventDate: Timestamp.fromDate(new Date(formData.eventDate)),
                     status: formData.status,
-                    totalPrice: finalPrice, // Saving final price after discount here
                     deposit: deposit,
-                    discount: discount, // Save discount amount
                     remainingPayment: remainingPayment,
                     notes: formData.notes,
                     updatedAt: Timestamp.now()
@@ -394,7 +476,7 @@
 
                 // Tangani konten multi-halaman jika gambar lebih tinggi dari satu halaman
                 while (heightLeft >= 0) {
-                    position = heightLeft - imgData.height; // Use image height here
+                    position = heightLeft - imgHeight; 
                     pdf.addPage();
                     pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
                     heightLeft -= pdfHeight;
@@ -417,6 +499,8 @@
         window.showInvoice = (bookingId) => {
             const booking = appState.bookings.find(b => b.id === bookingId);
             if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
+
+            const profile = appState.studioProfile; // Mengambil data profile dari state
 
             const modalEl = document.getElementById('modal-container');
             
@@ -450,9 +534,9 @@
                             <!-- HEADER (Mirip desain referensi) -->
                             <div class="flex justify-between items-start mb-8 border-b-2 border-gray-800 pb-2">
                                 <div class="flex items-center space-x-3">
-                                    <!-- MENGGANTI ICON DENGAN LOGO STUDIO (W-10 H-10) -->
+                                    <!-- LOGO STUDIO -->
                                     <img src="images/icon-192.png" alt="Logo Studio" class="w-10 h-10 object-cover rounded-lg">
-                                    <h3 class="text-xl font-bold text-gray-900 leading-none">${STUDIO_INFO.name} <br> Invoice</h3>
+                                    <h3 class="text-xl font-bold text-gray-900 leading-none">${profile.name} <br> Invoice</h3>
                                 </div>
 
                                 <div class="text-right">
@@ -465,12 +549,12 @@
                             
                             <!-- INFO KLIEN & KAMI (Mirip desain referensi) -->
                             <div class="flex flex-wrap justify-between text-sm mb-8">
-                                <!-- Studio Info (Diambil dari konstanta STUDIO_INFO) -->
+                                <!-- Studio Info (Diambil dari appState.studioProfile) -->
                                 <div class="w-full sm:w-1/2 mb-4 sm:mb-0">
-                                    <h4 class="font-bold text-gray-900 mb-1">${STUDIO_INFO.name}</h4>
-                                    <p>${STUDIO_INFO.address}</p>
-                                    <p>P: ${STUDIO_INFO.phone}</p>
-                                    <p>E: ${STUDIO_INFO.email}</p>
+                                    <h4 class="font-bold text-gray-900 mb-1">${profile.name}</h4>
+                                    <p>${profile.address}</p>
+                                    <p>P: ${profile.phone}</p>
+                                    <p>E: ${profile.email}</p>
                                 </div>
                                 <!-- Bill To Info -->
                                 <div class="w-full sm:w-1/2 text-left sm:text-right">
@@ -543,8 +627,8 @@
                             <p class="text-sm text-gray-500 italic mt-10 border-t pt-4">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
                             
                             <p class="text-xs text-center mt-4">
-                                ${STUDIO_INFO.footerDisclaimer} <br>
-                                E: ${STUDIO_INFO.email} | P: ${STUDIO_INFO.phone}
+                                ${profile.footerDisclaimer} <br>
+                                E: ${profile.email} | P: ${profile.phone}
                             </p>
 
                         </div>
@@ -774,7 +858,7 @@
             
             // Perhatikan: totalPrice sekarang menyimpan harga FINAL (setelah diskon),
             // jadi kita perlu mengambil harga paket awal dari data/state jika tersedia
-            let initialPrice = bookingData ? (bookingData.packagePrice || bookingData.totalPrice) : '';
+            let initialPrice = bookingData ? (bookingData.packagePrice || (bookingData.totalPrice + (bookingData.discount || 0))) : '';
             let discountValue = bookingData ? (bookingData.discount || 0) : 0;
             
             // Jika editing, set harga paket awal ke input total-price-input
@@ -834,10 +918,8 @@
             const booking = appState.bookings.find(b => b.id === bookingId);
             if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
             
-            // Close modal first
             closeModal();
             
-            // Switch view and populate form
             switchView('bookings');
             renderBookingForm(booking);
         };
@@ -1090,6 +1172,8 @@
                 document.getElementById('package-id').value = '';
                 document.getElementById('package-form-title').innerText = "Tambah Paket Produk Baru";
                 document.getElementById('save-package-btn').innerText = "Simpan Paket";
+            } else if (viewId === 'profile') {
+                renderProfileForm();
             }
         };
 
@@ -1160,6 +1244,19 @@
                 saveBooking(data, data.id || null);
             });
             
+            // Setup Profile Form Submission
+            document.getElementById('profile-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const data = {
+                    name: document.getElementById('profile-name').value,
+                    address: document.getElementById('profile-address').value,
+                    phone: document.getElementById('profile-phone').value,
+                    email: document.getElementById('profile-email').value,
+                    footerDisclaimer: document.getElementById('profile-disclaimer').value,
+                };
+                saveStudioProfile(data);
+            });
+            
             // Initial view setup
             window.switchView(appState.currentView);
         };
@@ -1171,9 +1268,7 @@
             closeModal();
             
             switchView('bookings');
-            // NOTE: We pass the original packagePrice to renderBookingForm for correct calculation if available.
-            const bookingDataForEdit = { ...booking, totalPrice: booking.packagePrice || booking.totalPrice };
-            renderBookingForm(bookingDataForEdit);
+            renderBookingForm(booking);
         };
         
         window.closeModal = () => {
@@ -1239,6 +1334,7 @@
                     <button id="nav-bookings" onclick="switchView('bookings')" class="nav-link py-2 transition duration-150">Pemesanan & Faktur</button>
                     <button id="nav-packages" onclick="switchView('packages')" class="nav-link py-2 transition duration-150">Paket Produk</button>
                     <button id="nav-reports" onclick="switchView('reports')" class="nav-link py-2 transition duration-150">Laporan</button>
+                    <button id="nav-profile" onclick="switchView('profile')" class="nav-link py-2 transition duration-150">Profile</button>
                     <button onclick="logoutUser()" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150">Logout</button>
                 </nav>
 
@@ -1255,6 +1351,7 @@
                 <button id="nav-bookings-mobile" onclick="switchView('bookings')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Pemesanan & Faktur</button>
                 <button id="nav-packages-mobile" onclick="switchView('packages')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Paket Produk</button>
                 <button id="nav-reports-mobile" onclick="switchView('reports')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Laporan</button>
+                <button id="nav-profile-mobile" onclick="switchView('profile')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Profile</button>
                 <button onclick="logoutUser()" class="w-full py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150 mt-4">Logout</button>
             </div>
         </header>
@@ -1419,6 +1516,39 @@
                         <!-- Content rendered by generateReport() -->
                     </div>
                 </div>
+                
+                <!-- 6. Profile View -->
+                <div id="profile-view" class="tab-content max-w-xl mx-auto">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Pengaturan Profil Studio</h2>
+                    <div class="p-6 bg-gray-50 rounded-xl shadow-lg">
+                        <p class="text-sm text-gray-600 mb-4">Ubah detail di bawah ini. Informasi ini akan otomatis diperbarui pada setiap faktur (invoice) yang Anda buat.</p>
+                        <form id="profile-form" class="space-y-4">
+                            <div class="space-y-1">
+                                <label for="profile-name" class="block text-sm font-medium text-gray-700">Nama Studio/Brand</label>
+                                <input type="text" id="profile-name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="profile-address" class="block text-sm font-medium text-gray-700">Alamat Lengkap</label>
+                                <textarea id="profile-address" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg"></textarea>
+                            </div>
+                            <div class="space-y-1">
+                                <label for="profile-phone" class="block text-sm font-medium text-gray-700">Nomor Telepon</label>
+                                <input type="tel" id="profile-phone" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="profile-email" class="block text-sm font-medium text-gray-700">Email Kontak</label>
+                                <input type="email" id="profile-email" required class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="profile-disclaimer" class="block text-sm font-medium text-gray-700">Teks Disclaimer Footer Faktur</label>
+                                <textarea id="profile-disclaimer" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg"></textarea>
+                            </div>
+                            
+                            <button type="submit" class="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition duration-150">Simpan Profile</button>
+                        </form>
+                    </div>
+                </div>
+
 
             </div>
         </main>
