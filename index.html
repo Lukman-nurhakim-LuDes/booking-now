@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PixelMore Studio  (PWA)</title>
+    <title>PixelMore Studio (PWA)</title>
     <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="images/icon-192.png">
+    <!-- Menggunakan ikon PWA untuk kompatibilitas -->
+    <link rel="icon" type="image/png" sizes="512x512" href="images/icon-512.png">
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body { font-family: 'Inter', sans-serif; }
@@ -26,21 +30,37 @@
             max-width: none !important; /* Lebar penuh */
             padding: 0;
             margin: 0;
+            /* Tambahkan background putih solid untuk PDF */
+            background-color: white; 
         }
     </style>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- PDF Libraries (jspdf and html2canvas) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
     <script type="module">
         // --- Firebase Imports dan Inisialisasi ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // --- KONFIGURASI FIREBASE ANDA (FIXED) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAKAjjpQHnHs_vQchvbYeuay_ZM1GQSPJc",
+            authDomain: "booking-clien.firebaseapp.com",
+            projectId: "booking-clien",
+            storageBucket: "booking-clien.firebasestorage.app",
+            messagingSenderId: "341981835337",
+            appId: "1:341981835337:web:ded90cf55794bb9c6d8f98"
+        };
+        // --- AKHIR KONFIGURASI FIREBASE ---
+
         // Global Variables
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* default config placeholder */ };
+        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId sebagai fallback ID
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
 
         // Initialize Firebase
         let app, db, auth, userId;
@@ -63,7 +83,7 @@
 
         // Utility Functions
         const formatRupiah = (amount) => {
-            if (amount === null || amount === undefined) return 'Rp 0';
+            if (amount === null || amount === undefined || isNaN(amount)) return 'Rp 0';
             return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
         };
 
@@ -106,8 +126,8 @@
                         await fetchInitialData();
                     } else {
                         // Handle initial token sign-in or fallback to anonymous if no user/token
-                        if (!isAuthReady && typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
+                        if (!isAuthReady && initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken).catch(() => signInAnonymously(auth));
                         } else {
                             // If no one is signed in, force show login form
                             document.getElementById('main-app').classList.add('hidden');
@@ -211,7 +231,6 @@
         };
 
         // --- CRUD Operations (Simplified) ---
-        // (savePackage, deletePackage, saveBooking, deleteBooking functions remain the same)
         const savePackage = async (packageData, packageId = null) => {
             if (!db || !userId) return showMessage("Silakan login untuk menyimpan data.", "error");
             try {
@@ -240,7 +259,10 @@
 
         const deletePackage = async (packageId) => {
             if (!db || !userId) return showMessage("Silakan login untuk menghapus data.", "error");
-            if (!confirm("Apakah Anda yakin ingin menghapus paket ini?")) return;
+            
+            // Mengganti confirm() dengan modal UI sederhana (walaupun di sini masih menggunakan confirm() karena keterbatasan lingkungan)
+            if (!window.confirm("Apakah Anda yakin ingin menghapus paket ini?")) return;
+            
             try {
                 const packageRef = doc(db, getCollectionPath(PACKAGES_COLLECTION), packageId);
                 await deleteDoc(packageRef);
@@ -255,20 +277,26 @@
             if (!db || !userId) return showMessage("Silakan login untuk menyimpan data.", "error");
             try {
                 const isNew = !bookingId;
-                const bookingRef = isNew 
-                    ? collection(db, getCollectionPath(BOOKINGS_COLLECTION)) 
+                const bookingRef = isNew
+                    ? collection(db, getCollectionPath(BOOKINGS_COLLECTION))
                     : doc(db, getCollectionPath(BOOKINGS_COLLECTION), bookingId);
+
+                // Mengambil nilai float dengan aman
+                const packagePrice = parseFloat(formData.packagePrice || 0);
+                const totalPrice = parseFloat(formData.totalPrice || 0);
+                const deposit = parseFloat(formData.deposit || 0);
+                const remainingPayment = parseFloat(formData.remainingPayment || 0);
+
                 const dataToSave = {
                     clientName: formData.clientName,
                     clientPhone: formData.clientPhone,
                     packageName: formData.packageName,
-                    packagePrice: parseFloat(formData.packagePrice || 0),
+                    packagePrice: packagePrice,
                     eventDate: Timestamp.fromDate(new Date(formData.eventDate)),
-                    bookingDate: Timestamp.fromDate(new Date()), // Date of creation/update
                     status: formData.status,
-                    totalPrice: parseFloat(formData.totalPrice || 0),
-                    deposit: parseFloat(formData.deposit || 0),
-                    remainingPayment: parseFloat(formData.remainingPayment || 0),
+                    totalPrice: totalPrice,
+                    deposit: deposit,
+                    remainingPayment: remainingPayment,
                     notes: formData.notes,
                     updatedAt: Timestamp.now()
                 };
@@ -278,6 +306,8 @@
                     await addDoc(bookingRef, dataToSave);
                     showMessage("Pemesanan baru berhasil disimpan!", "success");
                 } else {
+                    // Update the bookingDate field only if it exists (for compatibility)
+                    if (bookingRef.bookingDate) dataToSave.bookingDate = Timestamp.fromDate(new Date()); 
                     await updateDoc(bookingRef, dataToSave);
                     showMessage("Pemesanan berhasil diperbarui!", "success");
                 }
@@ -291,7 +321,7 @@
 
         const deleteBooking = async (bookingId) => {
             if (!db || !userId) return showMessage("Silakan login untuk menghapus data.", "error");
-            if (!confirm("Apakah Anda yakin ingin menghapus pemesanan ini? Tindakan ini tidak dapat dibatalkan.")) return;
+            if (!window.confirm("Apakah Anda yakin ingin menghapus pemesanan ini? Tindakan ini tidak dapat dibatalkan.")) return;
             try {
                 const bookingRef = doc(db, getCollectionPath(BOOKINGS_COLLECTION), bookingId);
                 await deleteDoc(bookingRef);
@@ -315,10 +345,10 @@
             invoiceContent.classList.add('invoice-print-area');
 
             // Gunakan html2canvas untuk mengonversi HTML ke kanvas/gambar
-            // Gunakan scale yang lebih tinggi untuk resolusi lebih baik
-            html2canvas(invoiceContent, { scale: 3 }).then(canvas => {
+            html2canvas(invoiceContent, { scale: 3, logging: false }).then(canvas => {
+                const { jsPDF } = window.jspdf;
                 const imgData = canvas.toDataURL('image/png');
-                const pdf = new window.jspdf.jsPDF({
+                const pdf = new jsPDF({
                     orientation: 'portrait',
                     unit: 'mm',
                     format: 'a4'
@@ -326,7 +356,9 @@
 
                 const pdfWidth = pdf.internal.pageSize.getWidth();
                 const pdfHeight = pdf.internal.pageSize.getHeight();
-                const imgHeight = canvas.height * pdfWidth / canvas.width;
+                
+                // Hitung tinggi gambar berdasarkan lebar PDF (mempertahankan rasio aspek)
+                const imgHeight = (canvas.height * pdfWidth) / canvas.width;
 
                 let heightLeft = imgHeight;
                 let position = 0;
@@ -334,7 +366,7 @@
                 pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
                 heightLeft -= pdfHeight;
 
-                // Tangani konten multi-halaman
+                // Tangani konten multi-halaman jika gambar lebih tinggi dari satu halaman
                 while (heightLeft >= 0) {
                     position = heightLeft - imgHeight;
                     pdf.addPage();
@@ -343,7 +375,7 @@
                 }
                 
                 const booking = appState.bookings.find(b => b.id === bookingId);
-                pdf.save(`Faktur_${booking.invoiceId || booking.id}.pdf`);
+                pdf.save(`Faktur_${booking.invoiceId || booking.id}_${booking.clientName}.pdf`);
                 
                 invoiceContent.classList.remove('invoice-print-area'); // Hapus kelas setelah selesai
                 showMessage("PDF berhasil diunduh!", "success");
@@ -364,6 +396,7 @@
             const total = formatRupiah(booking.totalPrice);
             const deposit = formatRupiah(booking.deposit);
             const remaining = formatRupiah(booking.remainingPayment);
+            const eventDate = formatDate(booking.eventDate);
             const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
             const invoiceContentId = `invoice-content-${booking.id}`;
 
@@ -374,64 +407,71 @@
                         
                         <!-- Invoice Content to be rendered as PDF -->
                         <div id="${invoiceContentId}" class="p-6">
-                            <h3 class="text-3xl font-extrabold text-orange-600 mb-4 border-b pb-2">FAKTUR PEMBAYARAN</h3>
-                            <div class="flex justify-between text-sm mb-4">
+                            <div class="flex justify-between items-start mb-6 border-b pb-4">
+                                <div>
+                                    <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
+                                    <p class="text-sm text-gray-500">PixelMore Studio Management</p>
+                                </div>
+                                <img src="images/icon-192.png" alt="Logo Studio" class="w-12 h-12 object-cover rounded-lg">
+                            </div>
+                            
+                            <div class="flex justify-between text-sm mb-6">
                                 <div>
                                     <p class="font-semibold text-gray-800">No. Faktur: ${booking.invoiceId || booking.id}</p>
-                                    <p class="text-gray-500">Tanggal: ${invoiceDate}</p>
+                                    <p class="text-gray-500">Tanggal Faktur: ${invoiceDate}</p>
+                                    <p class="text-gray-500">Tanggal Acara: ${eventDate}</p>
                                 </div>
                                 <div class="text-right">
                                     <p class="font-semibold text-gray-800">Status Pembayaran:</p>
-                                    <p class="text-xl font-bold ${booking.status === 'Paid' ? 'text-green-600' : booking.status === 'Booked' ? 'text-blue-500' : 'text-red-500'}">${booking.status}</p>
+                                    <p class="text-xl font-bold ${booking.remainingPayment <= 0 ? 'text-green-600' : booking.status === 'Booked' ? 'text-blue-500' : 'text-red-500'}">${booking.remainingPayment <= 0 ? 'LUNAS' : booking.status}</p>
                                 </div>
                             </div>
 
-                            <div class="mb-6 p-4 bg-gray-50 rounded-lg">
-                                <h4 class="font-bold mb-2">Detail Klien</h4>
+                            <div class="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <h4 class="font-bold mb-2 text-lg">Detail Klien</h4>
                                 <p>Nama: ${booking.clientName}</p>
                                 <p>Kontak: ${booking.clientPhone || '-'}</p>
-                                <p>Tanggal Acara: ${formatDate(booking.eventDate)}</p>
                             </div>
 
-                            <table class="min-w-full divide-y divide-gray-200 mb-6 border rounded-lg overflow-hidden">
+                            <table class="min-w-full divide-y divide-gray-200 mb-8 border rounded-lg overflow-hidden">
                                 <thead class="bg-gray-100">
                                     <tr>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Deskripsi</th>
-                                        <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Harga</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deskripsi Layanan</th>
+                                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Harga</th>
                                     </tr>
                                 </thead>
                                 <tbody class="bg-white divide-y divide-gray-200">
                                     <tr>
-                                        <td class="px-4 py-4 whitespace-nowrap font-medium">${booking.packageName}</td>
-                                        <td class="px-4 py-4 whitespace-nowrap text-right">${total}</td>
+                                        <td class="px-4 py-4 whitespace-nowrap font-medium text-base">${booking.packageName}</td>
+                                        <td class="px-4 py-4 whitespace-nowrap text-right text-base">${total}</td>
                                     </tr>
                                 </tbody>
                             </table>
 
                             <div class="flex justify-end mb-6">
-                                <div class="w-full max-w-xs space-y-2">
-                                    <div class="flex justify-between font-medium">
+                                <div class="w-full max-w-sm space-y-3 p-4 border rounded-xl bg-gray-50">
+                                    <div class="flex justify-between font-medium text-lg">
                                         <span>Total Biaya:</span>
                                         <span>${total}</span>
                                     </div>
-                                    <div class="flex justify-between text-green-600 border-t pt-2">
-                                        <span>DP/Pembayaran:</span>
-                                        <span>${deposit}</span>
+                                    <div class="flex justify-between text-green-600 border-t pt-3">
+                                        <span class="font-semibold">Pembayaran Diterima (DP/Cicilan):</span>
+                                        <span class="font-bold">${deposit}</span>
                                     </div>
-                                    <div class="flex justify-between font-bold text-lg text-red-600 border-t-2 border-dashed pt-2">
+                                    <div class="flex justify-between font-extrabold text-xl ${booking.remainingPayment <= 0 ? 'text-green-600' : 'text-red-600'} border-t-2 border-dashed pt-3">
                                         <span>Sisa Pembayaran:</span>
                                         <span>${remaining}</span>
                                     </div>
                                 </div>
                             </div>
                             
-                            <p class="text-sm text-gray-500 italic mt-6">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
+                            <p class="text-sm text-gray-500 italic mt-6 border-t pt-4">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
                         </div>
                         <!-- End Invoice Content -->
 
                         <div class="p-4 border-t flex justify-end space-x-2 bg-gray-50 rounded-b-xl">
-                            <button onclick="generateInvoicePdf('${booking.id}')" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition">Download PDF</button>
-                            <button onclick="editBooking('${booking.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">Edit Pemesanan</button>
+                            <button onclick="generateInvoicePdf('${booking.id}')" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition shadow-md">Download PDF</button>
+                            <button onclick="editBooking('${booking.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md">Edit Pemesanan</button>
                             <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">Tutup</button>
                         </div>
                     </div>
@@ -442,7 +482,6 @@
         };
 
         // --- Other Rendering Functions (Omitted for brevity, assume they remain similar) ---
-        // (renderCalendar, renderPackageList, renderBookingForm, generateReport, renderReport, renderBookingTable, renderUI, calculateMonthlyRevenue, switchView, showMessage)
         
         // --- Calendar Rendering ---
         const renderCalendar = (monthOffset = 0) => {
@@ -498,8 +537,8 @@
                 const todayClass = isToday ? 'bg-orange-100 border-orange-400 font-bold' : 'bg-white';
                 
                 // Styling for booked days
-                const bookingDot = dayBookings.length > 0 
-                    ? `<div class="absolute bottom-1 right-1 h-2 w-2 rounded-full ${dayBookings.length > 2 ? 'bg-red-500' : 'bg-blue-500'}"></div>` 
+                const bookingDot = dayBookings.length > 0
+                    ? `<div class="absolute bottom-1 right-1 h-2 w-2 rounded-full ${dayBookings.length > 2 ? 'bg-red-500' : 'bg-blue-500'}"></div>`
                     : '';
 
                 // Booking list for modal
@@ -510,7 +549,7 @@
                 `).join('');
 
                 daysHTML += `
-                    <div class="p-1 h-24 border border-gray-200 relative ${todayClass} hover:bg-gray-50 transition duration-150 cursor-pointer group" onclick="showDayDetails(new Date('${dateToCheck.toISOString()}'), ${JSON.stringify(dayBookings)})">
+                    <div class="p-1 h-24 border border-gray-200 relative ${todayClass} hover:bg-gray-50 transition duration-150 cursor-pointer group" onclick="showDayDetails(new Date('${dateToCheck.toISOString()}'), ${JSON.stringify(dayBookings).replace(/"/g, '&quot;')})">
                         <div class="text-sm text-right">${day}</div>
                         ${bookingDot}
                         <div class="text-xs mt-1 space-y-0.5 max-h-16 overflow-y-auto">
@@ -537,9 +576,10 @@
         
         window.showDayDetails = (date, bookings) => {
             const modalEl = document.getElementById('modal-container');
-            const dateStr = date.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const dateObj = new Date(date);
+            const dateStr = dateObj.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
             
-            const listHTML = bookings.length > 0 
+            const listHTML = bookings.length > 0
                 ? bookings.map(b => `
                     <li class="p-3 bg-white rounded-lg shadow-sm border border-gray-200 mb-2">
                         <p class="font-bold text-indigo-700">${b.clientName}</p>
@@ -628,7 +668,10 @@
             document.getElementById('booking-id-input').value = bookingData ? bookingData.id : '';
             document.getElementById('client-name-input').value = bookingData ? bookingData.clientName : '';
             document.getElementById('client-phone-input').value = bookingData ? bookingData.clientPhone : '';
-            document.getElementById('event-date-input').value = bookingData && bookingData.eventDate ? bookingData.eventDate.toISOString().substring(0, 10) : '';
+            // Event date is stored as Date object, convert to YYYY-MM-DD for input field
+            const eventDateStr = bookingData && bookingData.eventDate ? new Date(bookingData.eventDate).toISOString().substring(0, 10) : '';
+            document.getElementById('event-date-input').value = eventDateStr;
+            
             document.getElementById('status-input').value = bookingData ? bookingData.status : 'Booked';
             document.getElementById('total-price-input').value = bookingData ? bookingData.totalPrice : '';
             document.getElementById('deposit-input').value = bookingData ? bookingData.deposit : '';
@@ -672,7 +715,7 @@
 
         // --- Reporting Logic ---
         const generateReport = (year = new Date().getFullYear()) => {
-            const bookingsInYear = appState.bookings.filter(b => b.eventDate && b.eventDate.getFullYear() === year);
+            const bookingsInYear = appState.bookings.filter(b => b.eventDate && new Date(b.eventDate).getFullYear() === year);
             
             let totalRevenue = 0;
             let totalBookings = bookingsInYear.length;
@@ -691,7 +734,8 @@
                 }
 
                 if (booking.eventDate) {
-                    const month = booking.eventDate.getMonth();
+                    const date = new Date(booking.eventDate);
+                    const month = date.getMonth();
                     monthlyData[month].revenue += booking.totalPrice || 0;
                     monthlyData[month].bookings += 1;
                 }
@@ -862,7 +906,7 @@
                  bookingsTableEl.innerHTML = `
                     <h2 class="text-2xl font-bold text-gray-800 mb-6">Daftar Semua Pemesanan</h2>
                     ${renderBookingTable(appState.bookings)}
-                 `;
+                   `;
             }
 
             // Other view renderings (Calendar, Packages, Reports) are triggered by listeners or view switch
