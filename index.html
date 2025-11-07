@@ -987,23 +987,11 @@
 
         // --- Event Listeners and Setup ---
         window.onload = () => {
-            // Service Worker registration error is expected in non-standard environments
+            // Service Worker registration is intentionally skipped in this environment
+            // to avoid the "The URL protocol of the script (':') is not supported" TypeError 
+            // which frequently occurs in sandboxed iframes.
             if ('serviceWorker' in navigator) {
-                // We wrap the registration attempt to handle protocol errors gracefully in this environment.
-                try {
-                    navigator.serviceWorker.register('service-worker.js')
-                        .then(reg => console.log('Service Worker registered.', reg))
-                        .catch(err => {
-                            // Check for the specific TypeError related to protocol in non-HTTPS environments
-                            if (err.message && err.message.includes('protocol of the script (:') && err.name === 'TypeError') {
-                                console.warn('Service Worker registration skipped: Protocol not supported in this environment (expected behavior).');
-                            } else {
-                                console.error('Service Worker registration failed:', err);
-                            }
-                        });
-                } catch (e) {
-                    console.warn("Service Worker registration failed synchronously:", e.message);
-                }
+                console.warn('Service Worker registration skipped to prevent console errors in sandboxed environment.');
             }
 
             initializeAppAndAuth();
