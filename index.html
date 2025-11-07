@@ -91,7 +91,8 @@
         const formatDate = (timestamp) => {
             if (!timestamp) return 'N/A';
             const date = timestamp instanceof Timestamp ? timestamp.toDate() : new Date(timestamp);
-            return new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(date);
+            // Format yang lebih pendek untuk faktur mobile
+            return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
         };
 
         const getCollectionPath = (collectionName, isPublic = false) => {
@@ -218,6 +219,7 @@
                         id: doc.id,
                         ...data,
                         bookingDate: data.bookingDate instanceof Timestamp ? data.bookingDate.toDate() : (data.bookingDate || null),
+                        createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : (data.createdAt || null),
                         eventDate: data.eventDate instanceof Timestamp ? data.eventDate.toDate() : (data.eventDate || null),
                     };
                 });
@@ -395,93 +397,142 @@
             });
         };
 
-        // --- Invoice Rendering (Updated to support PDF export) ---
+        // --- Invoice Rendering (Updated based on user request) ---
         window.showInvoice = (bookingId) => {
             const booking = appState.bookings.find(b => b.id === bookingId);
             if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
 
             const modalEl = document.getElementById('modal-container');
-            const total = formatRupiah(booking.totalPrice);
-            const deposit = formatRupiah(booking.deposit);
-            const remaining = formatRupiah(booking.remainingPayment);
-            const eventDate = formatDate(booking.eventDate);
+            const subtotal = booking.totalPrice || 0;
+            const total = subtotal; // Karena tidak ada pajak/diskon di data Anda
+            const deposit = booking.deposit || 0;
+            const remaining = booking.remainingPayment || 0;
+
+            const totalRupiah = formatRupiah(total);
+            const subtotalRupiah = formatRupiah(subtotal);
+            const depositRupiah = formatRupiah(deposit);
+            const remainingRupiah = formatRupiah(remaining);
+            
+            // Menggunakan format tanggal pendek untuk tampilan faktur
             const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
+            const eventDate = formatDate(booking.eventDate);
+            
             const invoiceContentId = `invoice-content-${booking.id}`;
 
-            // MENGUBAH UKURAN LOGO DI SINI: dari w-14 h-14 menjadi w-28 h-28 (112x112)
             const invoiceHTML = `
-                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg md:max-w-2xl my-8">
                         
                         <!-- Invoice Content to be rendered as PDF -->
-                        <div id="${invoiceContentId}" class="p-6">
-                            <div class="flex justify-between items-start mb-6 border-b pb-4">
-                                <div>
-                                    <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
-                                    <p class="text-sm text-gray-500">PixelMore Studio Management</p>
+                        <div id="${invoiceContentId}" class="p-6 text-gray-800">
+
+                            <!-- HEADER (Mirip desain referensi) -->
+                            <div class="flex justify-between items-start mb-8 border-b-2 border-gray-800 pb-2">
+                                <div class="flex items-center space-x-3">
+                                    <!-- Icon Kamera SVG (Pengganti PNG agar lebih sesuai dengan desain B/W) -->
+                                    <svg class="w-8 h-8 text-gray-900" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/><path d="M12 7a5 5 0 0 0-5 5h2a3 3 0 0 1 3-3V7z"/></svg>
+                                    <h3 class="text-xl font-bold text-gray-900 leading-none">Photography <br> Invoice</h3>
                                 </div>
-                                <!-- Logo ukuran W-28 H-28 (112x112) -->
-                                <img src="images/icon-192.png" alt="Logo Studio" class="w-28 h-28 object-cover rounded-lg">
+
+                                <div class="text-right">
+                                    <h1 class="text-4xl font-extrabold mb-1">INVOICE</h1>
+                                    <p class="text-sm font-semibold">Invoice #: ${booking.invoiceId || booking.id}</p>
+                                    <p class="text-sm">Invoice Date: ${invoiceDate}</p>
+                                    <p class="text-sm">Job Details: ${booking.packageName}</p>
+                                </div>
                             </div>
                             
-                            <div class="flex justify-between text-sm mb-6">
-                                <div>
-                                    <p class="font-semibold text-gray-800">No. Faktur: ${booking.invoiceId || booking.id}</p>
-                                    <p class="text-gray-500">Tanggal Faktur: ${invoiceDate}</p>
-                                    <p class="text-gray-500">Tanggal Acara: ${eventDate}</p>
+                            <!-- INFO KLIEN & KAMI (Mirip desain referensi) -->
+                            <div class="flex flex-wrap justify-between text-sm mb-8">
+                                <!-- Studio Info (Placeholder) -->
+                                <div class="w-full sm:w-1/2 mb-4 sm:mb-0">
+                                    <h4 class="font-bold text-gray-900 mb-1">PixelMore Studio</h4>
+                                    <p>Jl. Kreatif No. 123, Jakarta</p>
+                                    <p>P: 0812-3456-7890</p>
+                                    <p>E: hello@pixelmore.co</p>
                                 </div>
-                                <div class="text-right">
-                                    <p class="font-semibold text-gray-800">Status Pembayaran:</p>
-                                    <p class="text-xl font-bold ${booking.remainingPayment <= 0 ? 'text-green-600' : booking.status === 'Booked' ? 'text-blue-500' : 'text-red-500'}">${booking.remainingPayment <= 0 ? 'LUNAS' : booking.status}</p>
+                                <!-- Bill To Info -->
+                                <div class="w-full sm:w-1/2 text-left sm:text-right">
+                                    <h4 class="font-bold text-gray-900 mb-1">Bill to: ${booking.clientName}</h4>
+                                    <p>Phone: ${booking.clientPhone || '-'}</p>
+                                    <p>Event Date: ${eventDate}</p>
                                 </div>
                             </div>
 
-                            <div class="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                                <h4 class="font-bold mb-2 text-lg">Detail Klien</h4>
-                                <p>Nama: ${booking.clientName}</p>
-                                <p>Kontak: ${booking.clientPhone || '-'}</p>
-                            </div>
-
-                            <table class="min-w-full divide-y divide-gray-200 mb-8 border rounded-lg overflow-hidden">
-                                <thead class="bg-gray-100">
+                            <!-- TABEL ITEM LAYANAN -->
+                            <table class="min-w-full mb-8 border border-gray-300">
+                                <thead class="bg-gray-100 border-b-2 border-gray-300">
                                     <tr>
-                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deskripsi Layanan</th>
-                                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Harga</th>
+                                        <th class="py-2 px-3 text-left text-xs font-bold uppercase w-1/2">Description</th>
+                                        <th class="py-2 px-3 text-center text-xs font-bold uppercase">Qty</th>
+                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase">Unit Price</th>
+                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase hidden md:table-cell">Discount</th>
+                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase">Price</th>
                                     </tr>
                                 </thead>
-                                <tbody class="bg-white divide-y divide-gray-200">
+                                <tbody class="bg-white">
+                                    <!-- BARIS DATA DARI PEMESANAN -->
                                     <tr>
-                                        <td class="px-4 py-4 whitespace-nowrap font-medium text-base">${booking.packageName}</td>
-                                        <td class="px-4 py-4 whitespace-nowrap text-right text-base">${total}</td>
+                                        <td class="py-2 px-3 text-sm">${booking.packageName}</td>
+                                        <td class="py-2 px-3 text-center text-sm">1</td>
+                                        <td class="py-2 px-3 text-right text-sm">${subtotalRupiah}</td>
+                                        <td class="py-2 px-3 text-right text-sm hidden md:table-cell">Rp 0</td>
+                                        <td class="py-2 px-3 text-right text-sm">${subtotalRupiah}</td>
                                     </tr>
+                                    <!-- Baris Kosong untuk pemisah visual -->
+                                    <tr><td colspan="5" class="py-1"></td></tr>
                                 </tbody>
                             </table>
 
-                            <div class="flex justify-end mb-6">
-                                <div class="w-full max-w-sm space-y-3 p-4 border rounded-xl bg-gray-50">
-                                    <div class="flex justify-between font-medium text-lg">
-                                        <span>Total Biaya:</span>
-                                        <span>${total}</span>
+                            <!-- RINGKASAN HARGA -->
+                            <div class="flex justify-end">
+                                <div class="w-full sm:w-80">
+                                    <div class="flex justify-between mb-1 text-sm">
+                                        <span class="font-medium">Invoice Subtotal:</span>
+                                        <span class="font-medium">${subtotalRupiah}</span>
                                     </div>
-                                    <div class="flex justify-between text-green-600 border-t pt-3">
-                                        <span class="font-semibold">Pembayaran Diterima (DP/Cicilan):</span>
-                                        <span class="font-bold">${deposit}</span>
+                                    <div class="flex justify-between mb-1 text-sm text-gray-500">
+                                        <span class="font-medium">Tax Rate:</span>
+                                        <span class="font-medium">0.00%</span>
                                     </div>
-                                    <div class="flex justify-between font-extrabold text-xl ${booking.remainingPayment <= 0 ? 'text-green-600' : 'text-red-600'} border-t-2 border-dashed pt-3">
-                                        <span>Sisa Pembayaran:</span>
-                                        <span>${remaining}</span>
+                                    <div class="flex justify-between mb-1 text-sm text-gray-500 border-b pb-2">
+                                        <span class="font-medium">Sales Tax:</span>
+                                        <span class="font-medium">Rp 0</span>
+                                    </div>
+                                    
+                                    <div class="flex justify-between mt-2 text-sm text-green-600">
+                                        <span class="font-bold">Deposit Received:</span>
+                                        <span class="font-bold">${depositRupiah}</span>
+                                    </div>
+                                    
+                                    <div class="flex justify-between font-extrabold text-lg mt-3 pt-3 border-t-2 border-gray-800">
+                                        <span>TOTAL:</span>
+                                        <span>${totalRupiah}</span>
+                                    </div>
+                                    
+                                    <div class="flex justify-between font-bold text-red-600 text-base mt-2">
+                                        <span>Sisa Tagihan:</span>
+                                        <span>${remainingRupiah}</span>
                                     </div>
                                 </div>
                             </div>
+                            <!-- END RINGKASAN HARGA -->
+
+                            <!-- FOOTER / NOTE -->
+                            <p class="text-sm text-gray-500 italic mt-10 border-t pt-4">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
                             
-                            <p class="text-sm text-gray-500 italic mt-6 border-t pt-4">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
+                            <p class="text-xs text-center mt-4">
+                                Harap selesaikan pembayaran ke rekening resmi PixelMore Studio. <br>
+                                E: hello@pixelmore.co | P: 0812-3456-7890
+                            </p>
+
                         </div>
                         <!-- End Invoice Content -->
 
-                        <div class="p-4 border-t flex justify-end space-x-2 bg-gray-50 rounded-b-xl">
-                            <button onclick="generateInvoicePdf('${booking.id}')" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition shadow-md">Download PDF</button>
-                            <button onclick="editBooking('${booking.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md">Edit Pemesanan</button>
-                            <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">Tutup</button>
+                        <div class="p-4 border-t flex flex-wrap justify-end space-x-2 bg-gray-50 rounded-b-xl">
+                            <button onclick="generateInvoicePdf('${booking.id}')" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition shadow-md w-full sm:w-auto mb-2 sm:mb-0">Download PDF</button>
+                            <button onclick="editBooking('${booking.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md w-full sm:w-auto mb-2 sm:mb-0">Edit Pemesanan</button>
+                            <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition w-full sm:w-auto">Tutup</button>
                         </div>
                     </div>
                 </div>
