@@ -61,6 +61,15 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --- AKHIR KONFIGURASI FIREBASE ---
 
+        // KONSTANTA INFO STUDIO (TEMPAT EDIT ALAMAT & TEKS FOOTER FAKTUR)
+        const STUDIO_INFO = {
+            name: "PixelMore Studio",
+            address: "Jl. Kreatif No. 123, Jakarta",
+            phone: "0812-3456-7890",
+            email: "hello@pixelmore.co",
+            // EDIT TEKS FOOTER DI SINI
+            footerDisclaimer: "Harap selesaikan pembayaran ke rekening resmi PixelMore Studio.",
+        };
 
         // Initialize Firebase
         let app, db, auth, userId;
@@ -295,8 +304,14 @@
                 // Mengambil nilai float dengan aman
                 const packagePrice = parseFloat(formData.packagePrice || 0);
                 const totalPrice = parseFloat(formData.totalPrice || 0);
+                const discount = parseFloat(formData.discount || 0); // New discount field
                 const deposit = parseFloat(formData.deposit || 0);
-                const remainingPayment = parseFloat(formData.remainingPayment || 0);
+                
+                // Total price minus discount
+                const finalPrice = totalPrice - discount;
+                
+                // Recalculate remaining based on final price
+                const remainingPayment = finalPrice - deposit;
 
                 const dataToSave = {
                     clientName: formData.clientName,
@@ -305,8 +320,9 @@
                     packagePrice: packagePrice,
                     eventDate: Timestamp.fromDate(new Date(formData.eventDate)),
                     status: formData.status,
-                    totalPrice: totalPrice,
+                    totalPrice: finalPrice, // Saving final price after discount here
                     deposit: deposit,
+                    discount: discount, // Save discount amount
                     remainingPayment: remainingPayment,
                     notes: formData.notes,
                     updatedAt: Timestamp.now()
@@ -378,7 +394,7 @@
 
                 // Tangani konten multi-halaman jika gambar lebih tinggi dari satu halaman
                 while (heightLeft >= 0) {
-                    position = heightLeft - imgHeight;
+                    position = heightLeft - imgData.height; // Use image height here
                     pdf.addPage();
                     pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
                     heightLeft -= pdfHeight;
@@ -403,13 +419,18 @@
             if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
 
             const modalEl = document.getElementById('modal-container');
-            const subtotal = booking.totalPrice || 0;
-            const total = subtotal; // Karena tidak ada pajak/diskon di data Anda
+            
+            // Harga Awal (berdasarkan paket)
+            const initialPrice = booking.packagePrice || 0;
+            // Harga Final (setelah diskon)
+            const finalPrice = booking.totalPrice || 0; 
+            const discount = booking.discount || 0; 
             const deposit = booking.deposit || 0;
             const remaining = booking.remainingPayment || 0;
 
-            const totalRupiah = formatRupiah(total);
-            const subtotalRupiah = formatRupiah(subtotal);
+            const initialRupiah = formatRupiah(initialPrice);
+            const finalRupiah = formatRupiah(finalPrice);
+            const discountRupiah = formatRupiah(discount);
             const depositRupiah = formatRupiah(deposit);
             const remainingRupiah = formatRupiah(remaining);
             
@@ -429,9 +450,9 @@
                             <!-- HEADER (Mirip desain referensi) -->
                             <div class="flex justify-between items-start mb-8 border-b-2 border-gray-800 pb-2">
                                 <div class="flex items-center space-x-3">
-                                    <!-- Icon Kamera SVG (Pengganti PNG agar lebih sesuai dengan desain B/W) -->
-                                    <svg class="w-8 h-8 text-gray-900" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/><path d="M12 7a5 5 0 0 0-5 5h2a3 3 0 0 1 3-3V7z"/></svg>
-                                    <h3 class="text-xl font-bold text-gray-900 leading-none">Photography <br> Invoice</h3>
+                                    <!-- MENGGANTI ICON DENGAN LOGO STUDIO (W-10 H-10) -->
+                                    <img src="images/icon-192.png" alt="Logo Studio" class="w-10 h-10 object-cover rounded-lg">
+                                    <h3 class="text-xl font-bold text-gray-900 leading-none">${STUDIO_INFO.name} <br> Invoice</h3>
                                 </div>
 
                                 <div class="text-right">
@@ -444,12 +465,12 @@
                             
                             <!-- INFO KLIEN & KAMI (Mirip desain referensi) -->
                             <div class="flex flex-wrap justify-between text-sm mb-8">
-                                <!-- Studio Info (Placeholder) -->
+                                <!-- Studio Info (Diambil dari konstanta STUDIO_INFO) -->
                                 <div class="w-full sm:w-1/2 mb-4 sm:mb-0">
-                                    <h4 class="font-bold text-gray-900 mb-1">PixelMore Studio</h4>
-                                    <p>Jl. Kreatif No. 123, Jakarta</p>
-                                    <p>P: 0812-3456-7890</p>
-                                    <p>E: hello@pixelmore.co</p>
+                                    <h4 class="font-bold text-gray-900 mb-1">${STUDIO_INFO.name}</h4>
+                                    <p>${STUDIO_INFO.address}</p>
+                                    <p>P: ${STUDIO_INFO.phone}</p>
+                                    <p>E: ${STUDIO_INFO.email}</p>
                                 </div>
                                 <!-- Bill To Info -->
                                 <div class="w-full sm:w-1/2 text-left sm:text-right">
@@ -465,8 +486,8 @@
                                     <tr>
                                         <th class="py-2 px-3 text-left text-xs font-bold uppercase w-1/2">Description</th>
                                         <th class="py-2 px-3 text-center text-xs font-bold uppercase">Qty</th>
-                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase">Unit Price</th>
-                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase hidden md:table-cell">Discount</th>
+                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase hidden sm:table-cell">Unit Price</th>
+                                        <th class="py-2 px-3 text-right text-xs font-bold uppercase">Discount</th>
                                         <th class="py-2 px-3 text-right text-xs font-bold uppercase">Price</th>
                                     </tr>
                                 </thead>
@@ -475,9 +496,9 @@
                                     <tr>
                                         <td class="py-2 px-3 text-sm">${booking.packageName}</td>
                                         <td class="py-2 px-3 text-center text-sm">1</td>
-                                        <td class="py-2 px-3 text-right text-sm">${subtotalRupiah}</td>
-                                        <td class="py-2 px-3 text-right text-sm hidden md:table-cell">Rp 0</td>
-                                        <td class="py-2 px-3 text-right text-sm">${subtotalRupiah}</td>
+                                        <td class="py-2 px-3 text-right text-sm hidden sm:table-cell">${initialRupiah}</td>
+                                        <td class="py-2 px-3 text-right text-sm text-red-500">${discountRupiah}</td>
+                                        <td class="py-2 px-3 text-right text-sm">${finalRupiah}</td>
                                     </tr>
                                     <!-- Baris Kosong untuk pemisah visual -->
                                     <tr><td colspan="5" class="py-1"></td></tr>
@@ -489,7 +510,7 @@
                                 <div class="w-full sm:w-80">
                                     <div class="flex justify-between mb-1 text-sm">
                                         <span class="font-medium">Invoice Subtotal:</span>
-                                        <span class="font-medium">${subtotalRupiah}</span>
+                                        <span class="font-medium">${finalRupiah}</span>
                                     </div>
                                     <div class="flex justify-between mb-1 text-sm text-gray-500">
                                         <span class="font-medium">Tax Rate:</span>
@@ -507,7 +528,7 @@
                                     
                                     <div class="flex justify-between font-extrabold text-lg mt-3 pt-3 border-t-2 border-gray-800">
                                         <span>TOTAL:</span>
-                                        <span>${totalRupiah}</span>
+                                        <span>${finalRupiah}</span>
                                     </div>
                                     
                                     <div class="flex justify-between font-bold text-red-600 text-base mt-2">
@@ -522,8 +543,8 @@
                             <p class="text-sm text-gray-500 italic mt-10 border-t pt-4">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
                             
                             <p class="text-xs text-center mt-4">
-                                Harap selesaikan pembayaran ke rekening resmi PixelMore Studio. <br>
-                                E: hello@pixelmore.co | P: 0812-3456-7890
+                                ${STUDIO_INFO.footerDisclaimer} <br>
+                                E: ${STUDIO_INFO.email} | P: ${STUDIO_INFO.phone}
                             </p>
 
                         </div>
@@ -750,19 +771,33 @@
             document.getElementById('event-date-input').value = eventDateStr;
             
             document.getElementById('status-input').value = bookingData ? bookingData.status : 'Booked';
-            document.getElementById('total-price-input').value = bookingData ? bookingData.totalPrice : '';
+            
+            // Perhatikan: totalPrice sekarang menyimpan harga FINAL (setelah diskon),
+            // jadi kita perlu mengambil harga paket awal dari data/state jika tersedia
+            let initialPrice = bookingData ? (bookingData.packagePrice || bookingData.totalPrice) : '';
+            let discountValue = bookingData ? (bookingData.discount || 0) : 0;
+            
+            // Jika editing, set harga paket awal ke input total-price-input
+            document.getElementById('total-price-input').value = initialPrice;
+            document.getElementById('discount-input').value = discountValue;
             document.getElementById('deposit-input').value = bookingData ? bookingData.deposit : '';
             document.getElementById('remaining-payment-input').value = bookingData ? bookingData.remainingPayment : '';
             document.getElementById('notes-input').value = bookingData ? bookingData.notes : '';
 
             // Calculate remaining payment dynamically
             const calculateRemaining = () => {
-                const total = parseFloat(document.getElementById('total-price-input').value) || 0;
+                const initial = parseFloat(document.getElementById('total-price-input').value) || 0;
+                const discount = parseFloat(document.getElementById('discount-input').value) || 0;
                 const deposit = parseFloat(document.getElementById('deposit-input').value) || 0;
-                const remaining = total - deposit;
+                
+                const finalTotal = initial - discount;
+                const remaining = finalTotal - deposit;
+                
+                // Update display and hidden input
                 document.getElementById('remaining-payment-input').value = remaining.toFixed(0);
                 document.getElementById('remaining-display').innerText = formatRupiah(remaining);
-                
+                document.getElementById('final-total-display').innerText = formatRupiah(finalTotal);
+
                 const remainingDisplayEl = document.getElementById('remaining-display');
                 if (remaining <= 0) {
                     remainingDisplayEl.classList.remove('text-red-600');
@@ -776,11 +811,14 @@
             // Remove previous listeners (to prevent duplication on re-render)
             document.getElementById('total-price-input').oninput = null;
             document.getElementById('deposit-input').oninput = null;
+            document.getElementById('discount-input').oninput = null;
             packageSelect.onchange = null;
 
 
             document.getElementById('total-price-input').oninput = calculateRemaining;
+            document.getElementById('discount-input').oninput = calculateRemaining; // New listener for discount
             document.getElementById('deposit-input').oninput = calculateRemaining;
+            
             packageSelect.onchange = () => {
                 const selectedOption = packageSelect.options[packageSelect.selectedIndex];
                 const price = parseFloat(selectedOption.getAttribute('data-price')) || 0;
@@ -788,9 +826,8 @@
                 calculateRemaining();
             };
             
-            if (bookingData) {
-                calculateRemaining(); // Initial calculation if editing
-            }
+            // Initial calculation if loading/editing
+            calculateRemaining();
         };
 
         window.editBooking = (bookingId) => {
@@ -807,6 +844,7 @@
 
         // --- Reporting Logic ---
         const generateReport = (year = new Date().getFullYear()) => {
+            // Note: TotalRevenue dan harga paket di report sekarang berdasarkan totalPrice (Harga Akhir setelah diskon)
             const bookingsInYear = appState.bookings.filter(b => b.eventDate && new Date(b.eventDate).getFullYear() === year);
             
             let totalRevenue = 0;
@@ -820,7 +858,7 @@
             }
 
             bookingsInYear.forEach(booking => {
-                totalRevenue += booking.totalPrice || 0;
+                totalRevenue += booking.totalPrice || 0; // Menggunakan Harga Final (totalPrice)
                 if (booking.status === 'Completed') {
                     completedBookings++;
                 }
@@ -1112,11 +1150,13 @@
                     packagePrice: document.getElementById('total-price-input').value,
                     eventDate: document.getElementById('event-date-input').value,
                     status: document.getElementById('status-input').value,
-                    totalPrice: document.getElementById('total-price-input').value,
+                    // total price calculation and discount field removed from direct reading
                     deposit: document.getElementById('deposit-input').value,
-                    remainingPayment: document.getElementById('remaining-payment-input').value,
+                    discount: document.getElementById('discount-input').value, // Get discount value
                     notes: document.getElementById('notes-input').value,
                 };
+                // NOTE: We pass the initial package price as totalPrice (for the saveBooking logic to recalculate the final price)
+                data.totalPrice = data.packagePrice; 
                 saveBooking(data, data.id || null);
             });
             
@@ -1131,7 +1171,9 @@
             closeModal();
             
             switchView('bookings');
-            renderBookingForm(booking);
+            // NOTE: We pass the original packagePrice to renderBookingForm for correct calculation if available.
+            const bookingDataForEdit = { ...booking, totalPrice: booking.packagePrice || booking.totalPrice };
+            renderBookingForm(bookingDataForEdit);
         };
         
         window.closeModal = () => {
@@ -1263,15 +1305,26 @@
                                 </select>
                             </div>
                             
-                            <div class="grid grid-cols-2 gap-4">
-                                <div class="space-y-1">
-                                    <label for="total-price-input" class="block text-sm font-medium text-gray-700">Total Harga (Rp)</label>
-                                    <input type="number" id="total-price-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
-                                </div>
-                                <div class="space-y-1">
-                                    <label for="deposit-input" class="block text-sm font-medium text-gray-700">DP/Bayar (Rp)</label>
-                                    <input type="number" id="deposit-input" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
-                                </div>
+                            <!-- INPUT HARGA AWAL PAKET -->
+                            <div class="space-y-1">
+                                <label for="total-price-input" class="block text-sm font-medium text-gray-700">Harga Paket Awal (Rp)</label>
+                                <input type="number" id="total-price-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                            </div>
+                            
+                            <!-- INPUT DISKON (OPSIONAL) -->
+                            <div class="space-y-1">
+                                <label for="discount-input" class="block text-sm font-medium text-gray-700">Diskon (Rp) (Opsional)</label>
+                                <input type="number" id="discount-input" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                            </div>
+
+                            <div class="space-y-1 bg-yellow-100 p-2 rounded-lg border-dashed border-2 border-yellow-300">
+                                <label class="block text-sm font-bold text-gray-700">Total Harga Setelah Diskon</label>
+                                <p id="final-total-display" class="text-xl font-extrabold text-gray-800">Rp 0</p>
+                            </div>
+
+                            <div class="space-y-1">
+                                <label for="deposit-input" class="block text-sm font-medium text-gray-700">DP/Pembayaran Masuk (Rp)</label>
+                                <input type="number" id="deposit-input" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
                             </div>
 
                             <div class="space-y-1 bg-yellow-100 p-2 rounded-lg">
