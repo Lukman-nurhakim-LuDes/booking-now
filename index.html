@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PixelMore Studio</title>
+    <title>PixelMore Studio (PWA)</title>
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="images/icon-192.png">
     <!-- Menggunakan ikon PWA untuk kompatibilitas -->
@@ -13,6 +13,7 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body { font-family: 'Inter', sans-serif; }
         .tab-content { display: none; }
+        /* Menggunakan kelas global untuk menu aktif */
         .active-tab {
             border-bottom: 4px solid #F97316; /* Tailwind orange-600 */
             color: #F97316;
@@ -46,7 +47,6 @@
         import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- KONFIGURASI FIREBASE (DIPERBAIKI: Mengembalikan hardcode untuk lingkungan Canvas) ---
-        // PENTING: Dalam lingkungan nyata, ini harus menggunakan variabel global __firebase_config
         const firebaseConfig = {
             apiKey: "AIzaSyAKAjjpQHnHs_vQchvbYeuay_ZM1GQSPJc",
             authDomain: "booking-clien.firebaseapp.com",
@@ -57,7 +57,6 @@
         };
         
         // Global Variables
-        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId sebagai fallback ID
         const appId = typeof __app_id !== 'undefined' ? __app_id : (firebaseConfig.projectId || 'default-app-id');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --- AKHIR KONFIGURASI FIREBASE ---
@@ -421,8 +420,8 @@
                                     <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
                                     <p class="text-sm text-gray-500">PixelMore Studio Management</p>
                                 </div>
-                                <!-- Logo ukuran W-16 H-16 (Diperbesar) -->
-                                <img src="images/icon-192.png" alt="Logo Studio" class="w-16 h-16 object-cover rounded-lg">
+                                <!-- Logo ukuran W-24 H-24 (Diperbesar) -->
+                                <img src="images/icon-192.png" alt="Logo Studio" class="w-24 h-24 object-cover rounded-lg">
                             </div>
                             
                             <div class="flex justify-between text-sm mb-6">
@@ -825,18 +824,18 @@
             reportEl.innerHTML = `
                 <h2 class="text-2xl font-bold text-gray-800 mb-6">Laporan Tahunan ${year}</h2>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
-                        <p class="text-sm font-medium text-gray-500">Total Pendapatan (Gross)</p>
-                        <p class="text-3xl font-extrabold text-gray-900">${formatRupiah(summary.totalRevenue)}</p>
+                <div class="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6 mb-8">
+                    <div class="p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
+                        <p class="text-xs font-medium text-gray-500">Total Pendapatan (Gross)</p>
+                        <p class="text-xl md:text-3xl font-extrabold text-gray-900">${formatRupiah(summary.totalRevenue)}</p>
                     </div>
-                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
-                        <p class="text-sm font-medium text-gray-500">Total Pemesanan</p>
-                        <p class="text-3xl font-extrabold text-gray-900">${summary.totalBookings} Klien</p>
+                    <div class="p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
+                        <p class="text-xs font-medium text-gray-500">Total Pemesanan</p>
+                        <p class="text-xl md:text-3xl font-extrabold text-gray-900">${summary.totalBookings} Klien</p>
                     </div>
-                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
-                        <p class="text-sm font-medium text-gray-500">Pemesanan Selesai</p>
-                        <p class="text-3xl font-extrabold text-gray-900">${summary.completedBookings} Klien</p>
+                    <div class="col-span-2 md:col-span-1 p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
+                        <p class="text-xs font-medium text-gray-500">Pemesanan Selesai</p>
+                        <p class="text-xl md:text-3xl font-extrabold text-gray-900">${summary.completedBookings} Klien</p>
                     </div>
                 </div>
 
@@ -867,18 +866,18 @@
         const renderBookingTable = (bookings) => {
              const tableRows = bookings.map(b => `
                 <tr class="hover:bg-gray-50 transition duration-150 cursor-pointer" onclick="showInvoice('${b.id}')">
-                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${b.clientName}</td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${b.packageName}</td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatDate(b.eventDate)}</td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatRupiah(b.totalPrice)}</td>
-                    <td class="px-4 py-3 whitespace-nowrap">
+                    <td class="px-2 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">${b.clientName}</td>
+                    <td class="px-2 py-3 text-sm text-gray-500 whitespace-nowrap hidden sm:table-cell">${b.packageName}</td>
+                    <td class="px-2 py-3 text-sm text-gray-500 whitespace-nowrap">${formatDate(b.eventDate)}</td>
+                    <td class="px-2 py-3 text-sm text-gray-500 whitespace-nowrap hidden sm:table-cell">${formatRupiah(b.totalPrice)}</td>
+                    <td class="px-2 py-3 whitespace-nowrap hidden md:table-cell">
                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${b.remainingPayment <= 0 ? 'bg-green-100 text-green-800' : b.status === 'Paid' ? 'bg-indigo-100 text-indigo-800' : b.status === 'Booked' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}">
                             ${b.status}
                         </span>
                     </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium flex space-x-2 justify-end">
-                        <button onclick="event.stopPropagation(); showInvoice('${b.id}')" class="text-orange-600 hover:text-orange-900">Faktur</button>
-                        <button onclick="event.stopPropagation(); deleteBooking('${b.id}')" class="text-red-600 hover:text-red-900">Hapus</button>
+                    <td class="px-2 py-3 whitespace-nowrap text-right text-sm font-medium space-x-1 flex justify-end items-center">
+                        <button onclick="event.stopPropagation(); showInvoice('${b.id}')" class="text-orange-600 hover:text-orange-900 text-xs sm:text-sm">Faktur</button>
+                        <button onclick="event.stopPropagation(); deleteBooking('${b.id}')" class="text-red-600 hover:text-red-900 text-xs sm:text-sm">Hapus</button>
                     </td>
                 </tr>
             `).join('');
@@ -889,12 +888,12 @@
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Klien</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paket</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tgl Acara</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                                    <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Klien</th>
+                                    <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Paket</th>
+                                    <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tgl Acara</th>
+                                    <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Total</th>
+                                    <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Status</th>
+                                    <th class="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
@@ -926,18 +925,18 @@
                 const recentBookings = appState.bookings.slice(0, 5);
                 dashboardEl.innerHTML = `
                     <h2 class="text-2xl font-bold text-gray-800 mb-6">Sekilas Dashboard</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
-                            <p class="text-sm font-medium text-gray-500">Pemesanan Aktif</p>
-                            <p class="text-3xl font-extrabold text-gray-900">${appState.bookings.filter(b => b.status === 'Booked' || b.status === 'Paid').length}</p>
+                    <div class="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6 mb-8">
+                        <div class="p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
+                            <p class="text-xs font-medium text-gray-500">Pemesanan Aktif</p>
+                            <p class="text-xl md:text-3xl font-extrabold text-gray-900">${appState.bookings.filter(b => b.status === 'Booked' || b.status === 'Paid').length}</p>
                         </div>
-                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
-                            <p class="text-sm font-medium text-gray-500">Total Paket Tersedia</p>
-                            <p class="text-3xl font-extrabold text-gray-900">${appState.packages.length}</p>
+                        <div class="p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
+                            <p class="text-xs font-medium text-gray-500">Total Paket Tersedia</p>
+                            <p class="text-xl md:text-3xl font-extrabold text-gray-900">${appState.packages.length}</p>
                         </div>
-                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
-                            <p class="text-sm font-medium text-gray-500">Pendapatan Bulan Ini</p>
-                            <p class="text-3xl font-extrabold text-gray-900">${formatRupiah(calculateMonthlyRevenue())}</p>
+                        <div class="col-span-2 md:col-span-1 p-4 md:p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
+                            <p class="text-xs font-medium text-gray-500">Pendapatan Bulan Ini</p>
+                            <p class="text-xl md:text-3xl font-extrabold text-gray-900">${formatRupiah(calculateMonthlyRevenue())}</p>
                         </div>
                     </div>
                     
@@ -984,7 +983,15 @@
             document.getElementById(`${viewId}-view`).style.display = 'block';
 
             document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active-tab'));
-            document.getElementById(`nav-${viewId}`).classList.add('active-tab');
+            // Cek nav-link desktop
+            if (document.getElementById(`nav-${viewId}`)) {
+                 document.getElementById(`nav-${viewId}`).classList.add('active-tab');
+            }
+            // Cek nav-link mobile
+            if (document.getElementById(`nav-${viewId}-mobile`)) {
+                 document.getElementById(`nav-${viewId}-mobile`).classList.add('active-tab');
+            }
+
 
             // Reset forms and views when switching
             if (viewId === 'bookings') {
@@ -1096,8 +1103,8 @@
     <div id="login-view" class="hidden fixed inset-0 bg-gray-100 flex items-center justify-center p-4 z-40">
         <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
             <div class="flex justify-center mb-6">
-                <!-- Logo ukuran W-20 H-20 (Diperbesar) -->
-                <img src="images/icon-512.png" alt="Logo Studio" class="w-20 h-20 object-cover rounded-xl">
+                <!-- Logo ukuran W-28 H-28 (Diperbesar) -->
+                <img src="images/icon-512.png" alt="Logo Studio" class="w-28 h-28 object-cover rounded-xl">
             </div>
             <h2 class="text-3xl font-bold text-center text-orange-600 mb-6">PixelMore Studio Login</h2>
             <form id="login-form" class="space-y-4">
@@ -1127,8 +1134,8 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
                 
                 <div class="flex items-center space-x-2">
-                    <!-- Logo ukuran W-10 H-10 (Diperbesar) -->
-                    <img src="images/icon-192.png" alt="Logo Studio" class="w-10 h-10 object-cover rounded-lg">
+                    <!-- Logo ukuran W-12 H-12 (Diperbesar) -->
+                    <img src="images/icon-192.png" alt="Logo Studio" class="w-12 h-12 object-cover rounded-lg">
                     <h1 class="text-xl sm:text-2xl font-extrabold text-orange-600">PixelMore Studio</h1>
                 </div>
 
