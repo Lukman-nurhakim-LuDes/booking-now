@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manajemen Studio Foto (PWA)</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .tab-content { display: none; }
+        .active-tab {
+            border-bottom: 4px solid #F97316; /* Tailwind orange-600 */
+            color: #F97316;
+            font-weight: 600;
+        }
+        /* Custom scrollbar style */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Style khusus untuk konten faktur yang akan di-PDF */
+        .invoice-print-area {
+            box-shadow: none !important; /* Hapus shadow saat print */
+            max-width: none !important; /* Lebar penuh */
+            padding: 0;
+            margin: 0;
+        }
+    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF Libraries (jspdf and html2canvas) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script type="module">
+        // --- Firebase Imports dan Inisialisasi ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Variables
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* default config placeholder */ };
+
+        // Initialize Firebase
+        let app, db, auth, userId;
+        let isAuthReady = false;
+
+        // Configuration
+        const BOOKINGS_COLLECTION = 'bookings';
+        const PACKAGES_COLLECTION = 'packages';
+
+        // State Management
+        let appState = {
+            bookings: [],
+            packages: [],
+            currentView: 'dashboard',
+            isLoading: true,
+            authError: null,
+            dataError: null,
+            reportSummary: { totalRevenue: 0, totalBookings: 0, completedBookings: 0, monthlyData: {} }
+        };
+
+        // Utility Functions
+        const formatRupiah = (amount) => {
+            if (amount === null || amount === undefined) return 'Rp 0';
+            return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
+        };
+
+        const formatDate = (timestamp) => {
+            if (!timestamp) return 'N/A';
+            const date = timestamp instanceof Timestamp ? timestamp.toDate() : new Date(timestamp);
+            return new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(date);
+        };
+
+        const getCollectionPath = (collectionName, isPublic = false) => {
+            if (isPublic) {
+                return `/artifacts/${appId}/public/data/${collectionName}`;
+            }
+            // Use userId only if authenticated. If anonymous/platform token, it still works.
+            return `/artifacts/${appId}/users/${userId || 'anonymous'}/${collectionName}`;
+        };
+
+        // --- Firebase Initialization and Authentication ---
+        const initializeAppAndAuth = async () => {
+            try {
+                // Set Firestore logging for debugging
+                setLogLevel('debug');
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                const authElement = document.getElementById('auth-status');
+                
+                onAuthStateChanged(auth, async (user) => {
+                    if (user && user.uid) {
+                        userId = user.uid;
+                        authElement.innerHTML = `<span class="text-sm font-medium text-green-600">Logged in as: ${user.email || 'Anonymous User'}</span>`;
+                        isAuthReady = true;
+                        
+                        // Hide login, show main app
+                        document.getElementById('main-app').classList.remove('hidden');
+                        document.getElementById('login-view').classList.add('hidden');
+                        
+                        console.log("Authentication successful. User ID:", userId);
+                        await fetchInitialData();
+                    } else {
+                        // Handle initial token sign-in or fallback to anonymous if no user/token
+                        if (!isAuthReady && typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
+                        } else {
+                            // If no one is signed in, force show login form
+                            document.getElementById('main-app').classList.add('hidden');
+                            document.getElementById('login-view').classList.remove('hidden');
+                            userId = null;
+                            authElement.innerHTML = `<span class="text-sm font-medium text-red-600">Please log in.</span>`;
+                        }
+                    }
+                    if (!isAuthReady) {
+                        appState.isLoading = false;
+                        renderUI();
+                    }
+                });
+            } catch (error) {
+                console.error("Error during Firebase initialization or sign-in:", error);
+                appState.authError = "Gagal inisialisasi Firebase atau autentikasi. Lihat konsol untuk detail.";
+                appState.isLoading = false;
+                renderUI();
+            }
+        };
+
+        const loginUser = async (email, password) => {
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                showMessage("Login berhasil!", "success");
+            } catch (error) {
+                console.error("Login Gagal:", error);
+                showMessage("Login Gagal: " + (error.message.includes('auth/invalid-credential') ? 'Email atau password salah.' : error.message), "error");
+            }
+        };
+
+        const registerUser = async (email, password) => {
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showMessage("Registrasi berhasil! Anda telah login.", "success");
+            } catch (error) {
+                console.error("Registrasi Gagal:", error);
+                showMessage("Registrasi Gagal: " + error.message, "error");
+            }
+        };
+        
+        window.logoutUser = async () => {
+            try {
+                await signOut(auth);
+                showMessage("Logout berhasil. Silakan login kembali.", "info");
+                document.getElementById('main-app').classList.add('hidden');
+                document.getElementById('login-view').classList.remove('hidden');
+                userId = null;
+            } catch (error) {
+                console.error("Logout Gagal:", error);
+                showMessage("Logout Gagal: " + error.message, "error");
+            }
+        };
+
+        // --- Data Fetching and Real-time Listeners (onSnapshot) ---
+        const fetchInitialData = async () => {
+            if (!db || !isAuthReady || !userId) return;
+            
+            // 1. Packages Listener (Uses onSnapshot)
+            const packagesQuery = collection(db, getCollectionPath(PACKAGES_COLLECTION));
+            onSnapshot(packagesQuery, (snapshot) => {
+                const packages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                appState.packages = packages;
+                console.log("Packages updated:", packages);
+                renderPackageList();
+                renderBookingForm();
+            }, (error) => {
+                console.error("Error fetching packages:", error);
+                appState.dataError = "Gagal mengambil data paket.";
+            });
+
+            // 2. Bookings Listener (Uses onSnapshot)
+            const bookingsQuery = query(collection(db, getCollectionPath(BOOKINGS_COLLECTION)));
+            onSnapshot(bookingsQuery, (snapshot) => {
+                const bookings = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    // Convert Firestore Timestamp to Date objects or keep as-is for sorting
+                    return {
+                        id: doc.id,
+                        ...data,
+                        bookingDate: data.bookingDate instanceof Timestamp ? data.bookingDate.toDate() : (data.bookingDate || null),
+                        eventDate: data.eventDate instanceof Timestamp ? data.eventDate.toDate() : (data.eventDate || null),
+                    };
+                });
+                // Sort by event date (newest first)
+                appState.bookings = bookings.sort((a, b) => (b.eventDate || 0) - (a.eventDate || 0));
+                console.log("Bookings updated:", appState.bookings);
+                
+                appState.isLoading = false;
+                
+                renderUI();
+                renderCalendar();
+                generateReport();
+
+            }, (error) => {
+                console.error("Error fetching bookings:", error);
+                appState.dataError = "Gagal mengambil data pemesanan.";
+                appState.isLoading = false;
+                renderUI();
+            });
+        };
+
+        // --- CRUD Operations (Simplified) ---
+        // (savePackage, deletePackage, saveBooking, deleteBooking functions remain the same)
+        const savePackage = async (packageData, packageId = null) => {
+            if (!db || !userId) return showMessage("Silakan login untuk menyimpan data.", "error");
+            try {
+                const packageRef = packageId ? doc(db, getCollectionPath(PACKAGES_COLLECTION), packageId) : collection(db, getCollectionPath(PACKAGES_COLLECTION));
+                const dataToSave = {
+                    name: packageData.name,
+                    category: packageData.category,
+                    description: packageData.description,
+                    price: parseFloat(packageData.price || 0),
+                    updatedAt: Timestamp.now()
+                };
+                if (packageId) {
+                    await updateDoc(packageRef, dataToSave);
+                    showMessage("Paket berhasil diperbarui!", "success");
+                } else {
+                    dataToSave.createdAt = Timestamp.now();
+                    await addDoc(packageRef, dataToSave);
+                    showMessage("Paket baru berhasil ditambahkan!", "success");
+                }
+                document.getElementById('package-form').reset();
+            } catch (e) {
+                console.error("Error saving package:", e);
+                showMessage("Gagal menyimpan paket: " + e.message, "error");
+            }
+        };
+
+        const deletePackage = async (packageId) => {
+            if (!db || !userId) return showMessage("Silakan login untuk menghapus data.", "error");
+            if (!confirm("Apakah Anda yakin ingin menghapus paket ini?")) return;
+            try {
+                const packageRef = doc(db, getCollectionPath(PACKAGES_COLLECTION), packageId);
+                await deleteDoc(packageRef);
+                showMessage("Paket berhasil dihapus.", "success");
+            } catch (e) {
+                console.error("Error deleting package:", e);
+                showMessage("Gagal menghapus paket: " + e.message, "error");
+            }
+        };
+
+        const saveBooking = async (formData, bookingId = null) => {
+            if (!db || !userId) return showMessage("Silakan login untuk menyimpan data.", "error");
+            try {
+                const isNew = !bookingId;
+                const bookingRef = isNew 
+                    ? collection(db, getCollectionPath(BOOKINGS_COLLECTION)) 
+                    : doc(db, getCollectionPath(BOOKINGS_COLLECTION), bookingId);
+                const dataToSave = {
+                    clientName: formData.clientName,
+                    clientPhone: formData.clientPhone,
+                    packageName: formData.packageName,
+                    packagePrice: parseFloat(formData.packagePrice || 0),
+                    eventDate: Timestamp.fromDate(new Date(formData.eventDate)),
+                    bookingDate: Timestamp.fromDate(new Date()), // Date of creation/update
+                    status: formData.status,
+                    totalPrice: parseFloat(formData.totalPrice || 0),
+                    deposit: parseFloat(formData.deposit || 0),
+                    remainingPayment: parseFloat(formData.remainingPayment || 0),
+                    notes: formData.notes,
+                    updatedAt: Timestamp.now()
+                };
+                if (isNew) {
+                    dataToSave.invoiceId = 'INV-' + Date.now(); // Simple invoice ID
+                    dataToSave.createdAt = Timestamp.now();
+                    await addDoc(bookingRef, dataToSave);
+                    showMessage("Pemesanan baru berhasil disimpan!", "success");
+                } else {
+                    await updateDoc(bookingRef, dataToSave);
+                    showMessage("Pemesanan berhasil diperbarui!", "success");
+                }
+                document.getElementById('booking-form').reset();
+                switchView('dashboard');
+            } catch (e) {
+                console.error("Error saving booking:", e);
+                showMessage("Gagal menyimpan pemesanan: " + e.message, "error");
+            }
+        };
+
+        const deleteBooking = async (bookingId) => {
+            if (!db || !userId) return showMessage("Silakan login untuk menghapus data.", "error");
+            if (!confirm("Apakah Anda yakin ingin menghapus pemesanan ini? Tindakan ini tidak dapat dibatalkan.")) return;
+            try {
+                const bookingRef = doc(db, getCollectionPath(BOOKINGS_COLLECTION), bookingId);
+                await deleteDoc(bookingRef);
+                showMessage("Pemesanan berhasil dihapus.", "success");
+            } catch (e) {
+                console.error("Error deleting booking:", e);
+                showMessage("Gagal menghapus pemesanan: " + e.message, "error");
+            }
+        };
+        
+        // --- PDF Generation Logic ---
+        window.generateInvoicePdf = (bookingId) => {
+            const invoiceContent = document.getElementById('invoice-content-' + bookingId);
+            if (!invoiceContent) {
+                return showMessage("Konten faktur tidak ditemukan.", "error");
+            }
+            
+            showMessage("Membuat PDF...", "info");
+            
+            // Terapkan kelas sementara untuk memastikan rendering yang bersih dan menghapus batas/bayangan modal
+            invoiceContent.classList.add('invoice-print-area');
+
+            // Gunakan html2canvas untuk mengonversi HTML ke kanvas/gambar
+            // Gunakan scale yang lebih tinggi untuk resolusi lebih baik
+            html2canvas(invoiceContent, { scale: 3 }).then(canvas => {
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new window.jspdf.jsPDF({
+                    orientation: 'portrait',
+                    unit: 'mm',
+                    format: 'a4'
+                });
+
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = pdf.internal.pageSize.getHeight();
+                const imgHeight = canvas.height * pdfWidth / canvas.width;
+
+                let heightLeft = imgHeight;
+                let position = 0;
+
+                pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+                heightLeft -= pdfHeight;
+
+                // Tangani konten multi-halaman
+                while (heightLeft >= 0) {
+                    position = heightLeft - imgHeight;
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+                    heightLeft -= pdfHeight;
+                }
+                
+                const booking = appState.bookings.find(b => b.id === bookingId);
+                pdf.save(`Faktur_${booking.invoiceId || booking.id}.pdf`);
+                
+                invoiceContent.classList.remove('invoice-print-area'); // Hapus kelas setelah selesai
+                showMessage("PDF berhasil diunduh!", "success");
+                
+            }).catch(error => {
+                invoiceContent.classList.remove('invoice-print-area'); // Pastikan dihapus jika gagal
+                console.error("Gagal membuat PDF:", error);
+                showMessage("Gagal membuat PDF. Coba lagi atau periksa konsol: " + error.message, "error");
+            });
+        };
+
+        // --- Invoice Rendering (Updated to support PDF export) ---
+        window.showInvoice = (bookingId) => {
+            const booking = appState.bookings.find(b => b.id === bookingId);
+            if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
+
+            const modalEl = document.getElementById('modal-container');
+            const total = formatRupiah(booking.totalPrice);
+            const deposit = formatRupiah(booking.deposit);
+            const remaining = formatRupiah(booking.remainingPayment);
+            const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
+            const invoiceContentId = `invoice-content-${booking.id}`;
+
+
+            const invoiceHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
+                        
+                        <!-- Invoice Content to be rendered as PDF -->
+                        <div id="${invoiceContentId}" class="p-6">
+                            <h3 class="text-3xl font-extrabold text-orange-600 mb-4 border-b pb-2">FAKTUR PEMBAYARAN</h3>
+                            <div class="flex justify-between text-sm mb-4">
+                                <div>
+                                    <p class="font-semibold text-gray-800">No. Faktur: ${booking.invoiceId || booking.id}</p>
+                                    <p class="text-gray-500">Tanggal: ${invoiceDate}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="font-semibold text-gray-800">Status Pembayaran:</p>
+                                    <p class="text-xl font-bold ${booking.status === 'Paid' ? 'text-green-600' : booking.status === 'Booked' ? 'text-blue-500' : 'text-red-500'}">${booking.status}</p>
+                                </div>
+                            </div>
+
+                            <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                                <h4 class="font-bold mb-2">Detail Klien</h4>
+                                <p>Nama: ${booking.clientName}</p>
+                                <p>Kontak: ${booking.clientPhone || '-'}</p>
+                                <p>Tanggal Acara: ${formatDate(booking.eventDate)}</p>
+                            </div>
+
+                            <table class="min-w-full divide-y divide-gray-200 mb-6 border rounded-lg overflow-hidden">
+                                <thead class="bg-gray-100">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Deskripsi</th>
+                                        <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Harga</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-4 py-4 whitespace-nowrap font-medium">${booking.packageName}</td>
+                                        <td class="px-4 py-4 whitespace-nowrap text-right">${total}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div class="flex justify-end mb-6">
+                                <div class="w-full max-w-xs space-y-2">
+                                    <div class="flex justify-between font-medium">
+                                        <span>Total Biaya:</span>
+                                        <span>${total}</span>
+                                    </div>
+                                    <div class="flex justify-between text-green-600 border-t pt-2">
+                                        <span>DP/Pembayaran:</span>
+                                        <span>${deposit}</span>
+                                    </div>
+                                    <div class="flex justify-between font-bold text-lg text-red-600 border-t-2 border-dashed pt-2">
+                                        <span>Sisa Pembayaran:</span>
+                                        <span>${remaining}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <p class="text-sm text-gray-500 italic mt-6">Catatan: ${booking.notes || 'Tidak ada catatan khusus.'}</p>
+                        </div>
+                        <!-- End Invoice Content -->
+
+                        <div class="p-4 border-t flex justify-end space-x-2 bg-gray-50 rounded-b-xl">
+                            <button onclick="generateInvoicePdf('${booking.id}')" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition">Download PDF</button>
+                            <button onclick="editBooking('${booking.id}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">Edit Pemesanan</button>
+                            <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">Tutup</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            modalEl.innerHTML = invoiceHTML;
+        };
+
+        // --- Other Rendering Functions (Omitted for brevity, assume they remain similar) ---
+        // (renderCalendar, renderPackageList, renderBookingForm, generateReport, renderReport, renderBookingTable, renderUI, calculateMonthlyRevenue, switchView, showMessage)
+        
+        // --- Calendar Rendering ---
+        const renderCalendar = (monthOffset = 0) => {
+            const calendarEl = document.getElementById('calendar-view');
+            if (!calendarEl) return;
+
+            const now = new Date();
+            const currentMonth = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+            const monthName = currentMonth.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+
+            // Calendar Header
+            const headerHTML = `
+                <div class="flex justify-between items-center mb-4 p-2 bg-gray-100 rounded-lg shadow-sm">
+                    <button onclick="changeMonth(${monthOffset - 1})" class="p-2 rounded-full hover:bg-gray-200">
+                        <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                    </button>
+                    <h2 class="text-xl font-bold text-gray-800">${monthName}</h2>
+                    <button onclick="changeMonth(${monthOffset + 1})" class="p-2 rounded-full hover:bg-gray-200">
+                        <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    </button>
+                </div>
+            `;
+
+            // Calendar Grid Setup
+            const daysInMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+            const firstDayIndex = currentMonth.getDay(); // 0 (Sun) to 6 (Sat)
+            const daysOfWeek = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+
+            let daysHTML = daysOfWeek.map(day => `<div class="text-center font-semibold text-sm text-gray-500">${day}</div>`).join('');
+
+            // Padding days before the 1st
+            for (let i = 0; i < firstDayIndex; i++) {
+                daysHTML += `<div class="p-2 border border-gray-200 bg-gray-50"></div>`;
+            }
+
+            // Render actual days
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateToCheck = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+                
+                // Get bookings for this date
+                const dayBookings = appState.bookings.filter(booking => {
+                    if (!booking.eventDate) return false;
+                    const eventDate = new Date(booking.eventDate);
+                    return eventDate.getFullYear() === currentMonth.getFullYear() &&
+                           eventDate.getMonth() === currentMonth.getMonth() &&
+                           eventDate.getDate() === day;
+                });
+
+                // Styling for today
+                const isToday = today.toDateString() === dateToCheck.toDateString();
+                const todayClass = isToday ? 'bg-orange-100 border-orange-400 font-bold' : 'bg-white';
+                
+                // Styling for booked days
+                const bookingDot = dayBookings.length > 0 
+                    ? `<div class="absolute bottom-1 right-1 h-2 w-2 rounded-full ${dayBookings.length > 2 ? 'bg-red-500' : 'bg-blue-500'}"></div>` 
+                    : '';
+
+                // Booking list for modal
+                const bookingListHTML = dayBookings.map(b => `
+                    <div class="text-xs p-1 mt-1 bg-blue-50 text-blue-800 rounded-md border border-blue-200 hover:bg-blue-100 cursor-pointer" onclick="showInvoice('${b.id}')">
+                        ${b.clientName} - ${b.packageName}
+                    </div>
+                `).join('');
+
+                daysHTML += `
+                    <div class="p-1 h-24 border border-gray-200 relative ${todayClass} hover:bg-gray-50 transition duration-150 cursor-pointer group" onclick="showDayDetails(new Date('${dateToCheck.toISOString()}'), ${JSON.stringify(dayBookings)})">
+                        <div class="text-sm text-right">${day}</div>
+                        ${bookingDot}
+                        <div class="text-xs mt-1 space-y-0.5 max-h-16 overflow-y-auto">
+                            ${bookingListHTML}
+                        </div>
+                    </div>
+                `;
+            }
+
+            calendarEl.innerHTML = `
+                ${headerHTML}
+                <div class="grid grid-cols-7 gap-px border border-gray-200 bg-gray-200 text-center">
+                    ${daysHTML}
+                </div>
+            `;
+        };
+
+        // Export to window scope for HTML inline calls
+        window.currentMonthOffset = 0;
+        window.changeMonth = (offset) => {
+            window.currentMonthOffset = offset;
+            renderCalendar(offset);
+        };
+        
+        window.showDayDetails = (date, bookings) => {
+            const modalEl = document.getElementById('modal-container');
+            const dateStr = date.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            
+            const listHTML = bookings.length > 0 
+                ? bookings.map(b => `
+                    <li class="p-3 bg-white rounded-lg shadow-sm border border-gray-200 mb-2">
+                        <p class="font-bold text-indigo-700">${b.clientName}</p>
+                        <p class="text-sm text-gray-600">${b.packageName} (${b.status})</p>
+                        <button onclick="showInvoice('${b.id}')" class="mt-2 text-xs text-orange-500 hover:underline">Lihat Faktur</button>
+                    </li>
+                `).join('')
+                : '<p class="text-gray-500 p-4 text-center">Tidak ada pemesanan pada tanggal ini.</p>';
+
+            modalEl.innerHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+                        <div class="p-5 border-b flex justify-between items-center">
+                            <h3 class="text-xl font-bold text-gray-800">Detail Pemesanan: ${dateStr}</h3>
+                            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">&times;</button>
+                        </div>
+                        <ul class="p-5 max-h-96 overflow-y-auto">
+                            ${listHTML}
+                        </ul>
+                        <div class="p-5 border-t text-right">
+                            <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition">Tutup</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.closeModal = () => {
+            document.getElementById('modal-container').innerHTML = '';
+        };
+
+        // --- Package Management Rendering ---
+        const renderPackageList = () => {
+            const listEl = document.getElementById('package-list');
+            if (!listEl) return;
+
+            if (appState.packages.length === 0) {
+                listEl.innerHTML = `<div class="p-6 text-center text-gray-500 bg-white rounded-xl shadow-md">Belum ada paket yang ditambahkan.</div>`;
+                return;
+            }
+
+            const packageHTML = appState.packages.map(p => `
+                <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 ${p.category === 'Wedding' ? 'border-pink-500' : p.category === 'Prewedding' ? 'border-teal-500' : 'border-indigo-500'}">
+                    <h3 class="text-2xl font-bold text-gray-800">${p.name}</h3>
+                    <p class="text-gray-600 mb-3">${p.category}</p>
+                    <p class="text-3xl font-extrabold text-orange-600 my-2">${formatRupiah(p.price)}</p>
+                    <p class="text-sm text-gray-500 mb-4">${p.description}</p>
+                    <div class="space-x-2">
+                        <button onclick="editPackage('${p.id}')" class="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">Edit</button>
+                        <button onclick="deletePackage('${p.id}')" class="px-3 py-1 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition">Hapus</button>
+                    </div>
+                </div>
+            `).join('');
+
+            listEl.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">${packageHTML}</div>`;
+        };
+
+        window.editPackage = (packageId) => {
+            const pkg = appState.packages.find(p => p.id === packageId);
+            if (!pkg) return showMessage("Paket tidak ditemukan.", "error");
+
+            document.getElementById('package-id').value = pkg.id;
+            document.getElementById('package-name').value = pkg.name;
+            document.getElementById('package-category').value = pkg.category;
+            document.getElementById('package-price').value = pkg.price;
+            document.getElementById('package-description').value = pkg.description;
+
+            document.getElementById('package-form-title').innerText = "Edit Paket Produk";
+            document.getElementById('save-package-btn').innerText = "Simpan Perubahan";
+        };
+
+        // --- Booking/Invoice Rendering ---
+        const renderBookingForm = (bookingData = null) => {
+            const form = document.getElementById('booking-form');
+            if (!form) return;
+
+            // Populate Package Select Options
+            const packageSelect = document.getElementById('package-name-input');
+            packageSelect.innerHTML = `<option value="">Pilih Paket...</option>`;
+            appState.packages.forEach(pkg => {
+                const selected = bookingData && bookingData.packageName === pkg.name ? 'selected' : '';
+                packageSelect.innerHTML += `<option value="${pkg.name}" data-price="${pkg.price}" ${selected}>${pkg.name} (${formatRupiah(pkg.price)})</option>`;
+            });
+
+            // Populate form if editing
+            document.getElementById('booking-id-input').value = bookingData ? bookingData.id : '';
+            document.getElementById('client-name-input').value = bookingData ? bookingData.clientName : '';
+            document.getElementById('client-phone-input').value = bookingData ? bookingData.clientPhone : '';
+            document.getElementById('event-date-input').value = bookingData && bookingData.eventDate ? bookingData.eventDate.toISOString().substring(0, 10) : '';
+            document.getElementById('status-input').value = bookingData ? bookingData.status : 'Booked';
+            document.getElementById('total-price-input').value = bookingData ? bookingData.totalPrice : '';
+            document.getElementById('deposit-input').value = bookingData ? bookingData.deposit : '';
+            document.getElementById('remaining-payment-input').value = bookingData ? bookingData.remainingPayment : '';
+            document.getElementById('notes-input').value = bookingData ? bookingData.notes : '';
+
+            // Calculate remaining payment dynamically
+            const calculateRemaining = () => {
+                const total = parseFloat(document.getElementById('total-price-input').value) || 0;
+                const deposit = parseFloat(document.getElementById('deposit-input').value) || 0;
+                const remaining = total - deposit;
+                document.getElementById('remaining-payment-input').value = remaining.toFixed(0);
+                document.getElementById('remaining-display').innerText = formatRupiah(remaining);
+            };
+
+            document.getElementById('total-price-input').oninput = calculateRemaining;
+            document.getElementById('deposit-input').oninput = calculateRemaining;
+            packageSelect.onchange = () => {
+                const selectedOption = packageSelect.options[packageSelect.selectedIndex];
+                const price = parseFloat(selectedOption.getAttribute('data-price')) || 0;
+                document.getElementById('total-price-input').value = price.toFixed(0);
+                calculateRemaining();
+            };
+            
+            if (bookingData) {
+                calculateRemaining(); // Initial calculation if editing
+            }
+        };
+
+        window.editBooking = (bookingId) => {
+            const booking = appState.bookings.find(b => b.id === bookingId);
+            if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
+            
+            // Close modal first
+            closeModal();
+            
+            // Switch view and populate form
+            switchView('bookings');
+            renderBookingForm(booking);
+        };
+
+        // --- Reporting Logic ---
+        const generateReport = (year = new Date().getFullYear()) => {
+            const bookingsInYear = appState.bookings.filter(b => b.eventDate && b.eventDate.getFullYear() === year);
+            
+            let totalRevenue = 0;
+            let totalBookings = bookingsInYear.length;
+            let completedBookings = 0;
+            const monthlyData = {};
+
+            // Initialize monthly data
+            for (let i = 0; i < 12; i++) {
+                monthlyData[i] = { revenue: 0, bookings: 0 };
+            }
+
+            bookingsInYear.forEach(booking => {
+                totalRevenue += booking.totalPrice || 0;
+                if (booking.status === 'Completed') {
+                    completedBookings++;
+                }
+
+                if (booking.eventDate) {
+                    const month = booking.eventDate.getMonth();
+                    monthlyData[month].revenue += booking.totalPrice || 0;
+                    monthlyData[month].bookings += 1;
+                }
+            });
+
+            appState.reportSummary = { totalRevenue, totalBookings, completedBookings, monthlyData, year };
+            renderReport(year, bookingsInYear);
+        };
+
+        const renderReport = (year, bookingsInYear) => {
+            const reportEl = document.getElementById('report-view');
+            if (!reportEl) return;
+
+            const summary = appState.reportSummary;
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+            
+            // Bar Chart Logic (simple text-based for one-file app)
+            const maxBookings = Math.max(...Object.values(summary.monthlyData).map(d => d.bookings));
+            const maxRevenue = Math.max(...Object.values(summary.monthlyData).map(d => d.revenue));
+            
+            const chartHTML = monthNames.map((name, index) => {
+                const data = summary.monthlyData[index];
+                const bookingHeight = maxBookings > 0 ? (data.bookings / maxBookings) * 100 : 0;
+                const revenueHeight = maxRevenue > 0 ? (data.revenue / maxRevenue) * 100 : 0;
+                
+                return `
+                    <div class="flex flex-col items-center group relative">
+                        <div class="h-32 w-full flex items-end justify-center mb-1">
+                            <!-- Revenue Bar -->
+                            <div style="height: ${revenueHeight}%;" class="w-4 bg-orange-500 rounded-t-lg mr-1 transition-all duration-300 shadow-md"></div>
+                            <!-- Booking Bar -->
+                            <div style="height: ${bookingHeight}%;" class="w-4 bg-blue-500 rounded-t-lg transition-all duration-300 shadow-md"></div>
+                        </div>
+                        <span class="text-xs font-semibold">${name}</span>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs p-2 rounded-lg whitespace-nowrap">
+                            <p>Pemesanan: ${data.bookings}</p>
+                            <p>Pendapatan: ${formatRupiah(data.revenue)}</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+
+            reportEl.innerHTML = `
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">Laporan Tahunan ${year}</h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
+                        <p class="text-sm font-medium text-gray-500">Total Pendapatan (Gross)</p>
+                        <p class="text-3xl font-extrabold text-gray-900">${formatRupiah(summary.totalRevenue)}</p>
+                    </div>
+                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
+                        <p class="text-sm font-medium text-gray-500">Total Pemesanan</p>
+                        <p class="text-3xl font-extrabold text-gray-900">${summary.totalBookings} Klien</p>
+                    </div>
+                    <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
+                        <p class="text-sm font-medium text-gray-500">Pemesanan Selesai</p>
+                        <p class="text-3xl font-extrabold text-gray-900">${summary.completedBookings} Klien</p>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-lg">
+                    <h3 class="text-xl font-bold mb-4 text-gray-800">Pendapatan & Pemesanan Bulanan</h3>
+                    <div class="flex justify-around items-end space-x-2 border-b border-gray-300 pb-2">
+                        ${chartHTML}
+                    </div>
+                    <div class="flex justify-center mt-4 text-sm space-x-4">
+                        <span class="flex items-center"><div class="w-3 h-3 bg-orange-500 mr-1 rounded-sm"></div> Pendapatan</span>
+                        <span class="flex items-center"><div class="w-3 h-3 bg-blue-500 mr-1 rounded-sm"></div> Pemesanan</span>
+                    </div>
+                </div>
+
+                <div class="mt-8">
+                    <h3 class="text-xl font-bold mb-4 text-gray-800">Daftar Pemesanan Tahun ${year}</h3>
+                    ${renderBookingTable(bookingsInYear)}
+                </div>
+            `;
+        };
+
+        window.changeReportYear = (offset) => {
+            const currentYear = appState.reportSummary.year || new Date().getFullYear();
+            generateReport(currentYear + offset);
+        };
+        
+        // --- General UI Rendering ---
+        const renderBookingTable = (bookings) => {
+             const tableRows = bookings.map(b => `
+                <tr class="hover:bg-gray-50 transition duration-150 cursor-pointer" onclick="showInvoice('${b.id}')">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${b.clientName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${b.packageName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatDate(b.eventDate)}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatRupiah(b.totalPrice)}</td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${b.status === 'Completed' ? 'bg-green-100 text-green-800' : b.status === 'Paid' ? 'bg-indigo-100 text-indigo-800' : b.status === 'Booked' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}">
+                            ${b.status}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                        <button onclick="event.stopPropagation(); deleteBooking('${b.id}')" class="text-red-600 hover:text-red-900 ml-2">Hapus</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            return `
+                <div class="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Klien</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paket</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tgl Acara</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${tableRows || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Tidak ada data pemesanan yang tersedia.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        };
+        
+        const renderUI = () => {
+            const loadingScreen = document.getElementById('loading-screen');
+            const dashboardEl = document.getElementById('dashboard-view');
+            const bookingsTableEl = document.getElementById('bookings-table');
+            
+            if (appState.isLoading) {
+                loadingScreen.classList.remove('hidden');
+                return;
+            } else {
+                loadingScreen.classList.add('hidden');
+            }
+            
+            // Check if user is logged in before rendering main UI elements
+            if (!userId) return;
+
+            // Render Dashboard & Bookings Table (list of all bookings)
+            if (dashboardEl) {
+                const recentBookings = appState.bookings.slice(0, 5);
+                dashboardEl.innerHTML = `
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Sekilas Dashboard</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-blue-500">
+                            <p class="text-sm font-medium text-gray-500">Pemesanan Aktif</p>
+                            <p class="text-3xl font-extrabold text-gray-900">${appState.bookings.filter(b => b.status === 'Booked' || b.status === 'Paid').length}</p>
+                        </div>
+                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-green-500">
+                            <p class="text-sm font-medium text-gray-500">Total Paket Tersedia</p>
+                            <p class="text-3xl font-extrabold text-gray-900">${appState.packages.length}</p>
+                        </div>
+                        <div class="p-6 bg-white rounded-xl shadow-lg border-l-4 border-orange-500">
+                            <p class="text-sm font-medium text-gray-500">Pendapatan Bulan Ini</p>
+                            <p class="text-3xl font-extrabold text-gray-900">${formatRupiah(calculateMonthlyRevenue())}</p>
+                        </div>
+                    </div>
+                    
+                    <h3 class="text-xl font-bold text-gray-800 mb-4">5 Pemesanan Terbaru</h3>
+                    ${renderBookingTable(recentBookings)}
+                    <button onclick="switchView('bookings')" class="mt-4 text-orange-600 hover:text-orange-700 font-semibold">Lihat Semua Pemesanan &rarr;</button>
+                `;
+            }
+
+            if (bookingsTableEl) {
+                 bookingsTableEl.innerHTML = `
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Daftar Semua Pemesanan</h2>
+                    ${renderBookingTable(appState.bookings)}
+                 `;
+            }
+
+            // Other view renderings (Calendar, Packages, Reports) are triggered by listeners or view switch
+            renderCalendar(window.currentMonthOffset);
+            renderPackageList();
+            generateReport(new Date().getFullYear());
+        };
+
+        const calculateMonthlyRevenue = () => {
+            const currentMonth = new Date().getMonth();
+            const currentYear = new Date().getFullYear();
+            return appState.bookings
+                .filter(b => {
+                    const date = b.bookingDate || b.createdAt;
+                    if (!date) return false;
+                    const d = date instanceof Date ? date : date.toDate();
+                    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+                })
+                .reduce((sum, b) => sum + (b.totalPrice || 0), 0);
+        }
+
+        window.switchView = (viewId) => {
+            appState.currentView = viewId;
+            document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+            document.getElementById(`${viewId}-view`).style.display = 'block';
+
+            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active-tab'));
+            document.getElementById(`nav-${viewId}`).classList.add('active-tab');
+
+            // Reset forms and views when switching
+            if (viewId === 'bookings') {
+                renderBookingForm(null); // Reset to New Booking form
+            } else if (viewId === 'packages') {
+                document.getElementById('package-form').reset();
+                document.getElementById('package-id').value = '';
+                document.getElementById('package-form-title').innerText = "Tambah Paket Produk Baru";
+                document.getElementById('save-package-btn').innerText = "Simpan Paket";
+            }
+        };
+
+        const showMessage = (message, type = 'info') => {
+            const msgEl = document.getElementById('message-box');
+            let color = 'bg-blue-500';
+            if (type === 'success') color = 'bg-green-500';
+            if (type === 'error') color = 'bg-red-500';
+
+            msgEl.innerHTML = `<div class="p-3 text-white rounded-lg shadow-md ${color}">${message}</div>`;
+            msgEl.classList.remove('hidden');
+
+            setTimeout(() => msgEl.classList.add('hidden'), 5000);
+        };
+
+        // --- Event Listeners and Setup ---
+        window.onload = () => {
+            // Service Worker registration error is expected in non-standard environments
+            if ('serviceWorker' in navigator) {
+                // We wrap the registration attempt to handle protocol errors gracefully in this environment.
+                try {
+                    navigator.serviceWorker.register('service-worker.js')
+                        .then(reg => console.log('Service Worker registered.', reg))
+                        .catch(err => {
+                            // Check for the specific TypeError related to protocol in non-HTTPS environments
+                            if (err.message && err.message.includes('protocol of the script (:') && err.name === 'TypeError') {
+                                console.warn('Service Worker registration skipped: Protocol not supported in this environment (expected behavior).');
+                            } else {
+                                console.error('Service Worker registration failed:', err);
+                            }
+                        });
+                } catch (e) {
+                    console.warn("Service Worker registration failed synchronously:", e.message);
+                }
+            }
+
+            initializeAppAndAuth();
+            
+            // Setup Login/Register Form Submission
+            document.getElementById('login-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('login-email').value;
+                const password = document.getElementById('login-password').value;
+                loginUser(email, password);
+            });
+
+            document.getElementById('register-button').addEventListener('click', () => {
+                const email = document.getElementById('login-email').value;
+                const password = document.getElementById('login-password').value;
+                registerUser(email, password);
+            });
+            
+            // Setup Package Form Submission
+            document.getElementById('package-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const data = {
+                    id: document.getElementById('package-id').value,
+                    name: document.getElementById('package-name').value,
+                    category: document.getElementById('package-category').value,
+                    price: document.getElementById('package-price').value,
+                    description: document.getElementById('package-description').value,
+                };
+                savePackage(data, data.id || null);
+            });
+            
+            // Setup Booking Form Submission
+            document.getElementById('booking-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const data = {
+                    id: document.getElementById('booking-id-input').value,
+                    clientName: document.getElementById('client-name-input').value,
+                    clientPhone: document.getElementById('client-phone-input').value,
+                    packageName: document.getElementById('package-name-input').value,
+                    packagePrice: document.getElementById('total-price-input').value,
+                    eventDate: document.getElementById('event-date-input').value,
+                    status: document.getElementById('status-input').value,
+                    totalPrice: document.getElementById('total-price-input').value,
+                    deposit: document.getElementById('deposit-input').value,
+                    remainingPayment: document.getElementById('remaining-payment-input').value,
+                    notes: document.getElementById('notes-input').value,
+                };
+                saveBooking(data, data.id || null);
+            });
+            
+            // Initial view setup
+            window.switchView(appState.currentView);
+        };
+        
+        window.editBooking = (bookingId) => {
+            const booking = appState.bookings.find(b => b.id === bookingId);
+            if (!booking) return showMessage("Pemesanan tidak ditemukan.", "error");
+            
+            closeModal();
+            
+            switchView('bookings');
+            renderBookingForm(booking);
+        };
+        
+        window.closeModal = () => {
+            document.getElementById('modal-container').innerHTML = '';
+        };
+
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 bg-white flex flex-col items-center justify-center z-50">
+        <div class="animate-spin rounded-full h-12 w-12 border-4 border-orange-500 border-t-transparent"></div>
+        <p class="mt-4 text-lg font-semibold text-gray-700">Memuat Aplikasi dan Data...</p>
+        <div id="auth-status" class="mt-2 text-xs text-gray-500">Menunggu autentikasi...</div>
+        <div id="data-error" class="mt-2 text-sm text-red-500">${appState.authError || appState.dataError || ''}</div>
+    </div>
+
+    <!-- 0. Login View -->
+    <div id="login-view" class="hidden fixed inset-0 bg-gray-100 flex items-center justify-center p-4 z-40">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+            <h2 class="text-3xl font-bold text-center text-orange-600 mb-6">Studio Manager Pro Login</h2>
+            <form id="login-form" class="space-y-4">
+                <p class="text-sm text-gray-600 text-center">Silakan login atau daftar untuk mulai menggunakan aplikasi.</p>
+                <div class="space-y-1">
+                    <label for="login-email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="login-email" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div class="space-y-1">
+                    <label for="login-password" class="block text-sm font-medium text-gray-700">Password</label>
+                    <input type="password" id="login-password" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <button type="submit" class="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition duration-150 shadow-md">Login</button>
+            </form>
+            <div class="mt-4 text-center">
+                <p class="text-sm text-gray-600 mb-2">Belum punya akun?</p>
+                <button id="register-button" class="w-full py-2 border border-green-500 text-green-600 font-semibold rounded-lg hover:bg-green-50 transition duration-150">Daftar Akun Baru</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Main App Container -->
+    <div id="main-app" class="hidden">
+        
+        <!-- Header & Navigation -->
+        <header class="bg-white shadow-md sticky top-0 z-10">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                <h1 class="text-2xl font-extrabold text-orange-600">Studio Manager Pro</h1>
+                <nav class="flex space-x-6 text-gray-600 items-center">
+                    <button id="nav-dashboard" onclick="switchView('dashboard')" class="nav-link py-2 transition duration-150">Dashboard</button>
+                    <button id="nav-calendar" onclick="switchView('calendar')" class="nav-link py-2 transition duration-150">Kalender</button>
+                    <button id="nav-bookings" onclick="switchView('bookings')" class="nav-link py-2 transition duration-150">Pemesanan & Faktur</button>
+                    <button id="nav-packages" onclick="switchView('packages')" class="nav-link py-2 transition duration-150">Paket Produk</button>
+                    <button id="nav-reports" onclick="switchView('reports')" class="nav-link py-2 transition duration-150">Laporan</button>
+                    <button onclick="logoutUser()" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150">Logout</button>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Message Box -->
+        <div id="message-box" class="fixed top-20 right-4 z-50 hidden transition-all duration-300"></div>
+        
+        <!-- Content Area -->
+        <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <div class="p-6 bg-white rounded-xl shadow-lg min-h-[80vh]">
+
+                <!-- 1. Dashboard View -->
+                <div id="dashboard-view" class="tab-content">
+                    <!-- Content rendered by renderUI() -->
+                </div>
+
+                <!-- 2. Calendar View -->
+                <div id="calendar-view" class="tab-content">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Kalender Pemesanan</h2>
+                    <!-- Content rendered by renderCalendar() -->
+                </div>
+
+                <!-- 3. Bookings & Invoice View -->
+                <div id="bookings-view" class="tab-content grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    
+                    <!-- New Booking / Edit Form -->
+                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner h-fit sticky top-24">
+                        <h2 class="text-xl font-bold text-gray-800 mb-4">Buat Pemesanan Baru</h2>
+                        <form id="booking-form" class="space-y-4">
+                            <input type="hidden" id="booking-id-input">
+                            <div class="space-y-1">
+                                <label for="client-name-input" class="block text-sm font-medium text-gray-700">Nama Klien</label>
+                                <input type="text" id="client-name-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="client-phone-input" class="block text-sm font-medium text-gray-700">Nomor Telepon</label>
+                                <input type="tel" id="client-phone-input" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="event-date-input" class="block text-sm font-medium text-gray-700">Tanggal Acara</label>
+                                <input type="date" id="event-date-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="package-name-input" class="block text-sm font-medium text-gray-700">Paket Produk</label>
+                                <select id="package-name-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                    <option value="">Pilih Paket...</option>
+                                    <!-- Options populated by JS -->
+                                </select>
+                            </div>
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label for="total-price-input" class="block text-sm font-medium text-gray-700">Total Harga (Rp)</label>
+                                    <input type="number" id="total-price-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                                <div class="space-y-1">
+                                    <label for="deposit-input" class="block text-sm font-medium text-gray-700">DP/Bayar (Rp)</label>
+                                    <input type="number" id="deposit-input" value="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                            </div>
+
+                            <div class="space-y-1 bg-yellow-100 p-2 rounded-lg">
+                                <label class="block text-sm font-bold text-gray-700">Sisa Pembayaran</label>
+                                <p id="remaining-display" class="text-xl font-extrabold text-red-600">Rp 0</p>
+                                <input type="hidden" id="remaining-payment-input">
+                            </div>
+
+                            <div class="space-y-1">
+                                <label for="status-input" class="block text-sm font-medium text-gray-700">Status Pemesanan</label>
+                                <select id="status-input" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                    <option value="Booked">Booked (DP Masuk)</option>
+                                    <option value="Paid">Paid (Lunas)</option>
+                                    <option value="Completed">Completed (Selesai)</option>
+                                    <option value="Canceled">Canceled (Batal)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="space-y-1">
+                                <label for="notes-input" class="block text-sm font-medium text-gray-700">Catatan</label>
+                                <textarea id="notes-input" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"></textarea>
+                            </div>
+
+                            <button type="submit" class="w-full py-3 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-700 transition duration-150 shadow-lg">Simpan Pemesanan</button>
+                        </form>
+                    </div>
+
+                    <!-- Bookings Table / List -->
+                    <div class="lg:col-span-2">
+                        <div id="bookings-table">
+                            <!-- Content rendered by renderUI() -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Packages View -->
+                <div id="packages-view" class="tab-content grid grid-cols-1 lg:grid-cols-4 gap-8">
+                    
+                    <!-- Package Form -->
+                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner h-fit sticky top-24">
+                        <h2 id="package-form-title" class="text-xl font-bold text-gray-800 mb-4">Tambah Paket Produk Baru</h2>
+                        <form id="package-form" class="space-y-4">
+                            <input type="hidden" id="package-id">
+                            <div class="space-y-1">
+                                <label for="package-name" class="block text-sm font-medium text-gray-700">Nama Paket</label>
+                                <input type="text" id="package-name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="package-category" class="block text-sm font-medium text-gray-700">Kategori</label>
+                                <select id="package-category" required class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                    <option value="Wedding">Paket Wedding</option>
+                                    <option value="Prewedding">Paket Prewedding</option>
+                                    <option value="Studio">Paket Photo Studio</option>
+                                    <option value="Other">Lainnya</option>
+                                </select>
+                            </div>
+                            <div class="space-y-1">
+                                <label for="package-price" class="block text-sm font-medium text-gray-700">Harga (Rp)</label>
+                                <input type="number" id="package-price" required class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div class="space-y-1">
+                                <label for="package-description" class="block text-sm font-medium text-gray-700">Deskripsi Paket</label>
+                                <textarea id="package-description" rows="4" class="w-full px-3 py-2 border border-gray-300 rounded-lg"></textarea>
+                            </div>
+                            <button type="submit" id="save-package-btn" class="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition duration-150">Simpan Paket</button>
+                        </form>
+                    </div>
+
+                    <!-- Package List -->
+                    <div class="lg:col-span-3">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-6">Daftar Paket Produk</h2>
+                        <div id="package-list">
+                            <!-- Content rendered by renderPackageList() -->
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 5. Reports View -->
+                <div id="reports-view" class="tab-content">
+                    <!-- Year Navigation -->
+                    <div class="flex justify-center items-center mb-6">
+                        <button onclick="changeReportYear(-1)" class="p-2 rounded-full hover:bg-gray-200">
+                            <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                        </button>
+                        <h2 class="text-2xl font-bold text-gray-800 mx-4">Laporan</h2>
+                        <button onclick="changeReportYear(1)" class="p-2 rounded-full hover:bg-gray-200">
+                            <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        </button>
+                    </div>
+                    <div id="report-view">
+                        <!-- Content rendered by generateReport() -->
+                    </div>
+                </div>
+
+            </div>
+        </main>
+        
+        <!-- Modal Container -->
+        <div id="modal-container"></div>
+        
+    </div>
+</body>
+</html>
