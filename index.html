@@ -408,7 +408,7 @@
             const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
             const invoiceContentId = `invoice-content-${booking.id}`;
 
-            // Menggunakan URL lokal images/icon-192.png
+            // MENGUBAH UKURAN LOGO DI SINI: dari w-14 h-14 menjadi w-28 h-28 (112x112)
             const invoiceHTML = `
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
@@ -420,8 +420,8 @@
                                     <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
                                     <p class="text-sm text-gray-500">PixelMore Studio Management</p>
                                 </div>
-                                <!-- Logo ukuran W-14 H-14 untuk seimbangkan dengan teks 3XL -->
-                                <img src="images/icon-192.png" alt="Logo Studio" class="w-14 h-14 object-cover rounded-lg">
+                                <!-- Logo ukuran W-28 H-28 (112x112) -->
+                                <img src="images/icon-192.png" alt="Logo Studio" class="w-28 h-28 object-cover rounded-lg">
                             </div>
                             
                             <div class="flex justify-between text-sm mb-6">
@@ -1103,7 +1103,7 @@
     <div id="login-view" class="hidden fixed inset-0 bg-gray-100 flex items-center justify-center p-4 z-40">
         <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
             <div class="flex justify-center mb-6">
-                <!-- Logo ukuran W-28 H-28 (Diperbesar) -->
+                <!-- Logo ukuran W-28 H-28 (112x112 - Sudah benar, tidak diubah) -->
                 <img src="images/icon-512.png" alt="Logo Studio" class="w-28 h-28 object-cover rounded-xl">
             </div>
             <h2 class="text-3xl font-bold text-center text-orange-600 mb-6">PixelMore Studio Login</h2>
@@ -1134,8 +1134,8 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
                 
                 <div class="flex items-center space-x-2">
-                    <!-- Logo ukuran W-12 H-12 (Diperbesar) -->
-                    <img src="images/icon-192.png" alt="Logo Studio" class="w-12 h-12 object-cover rounded-lg">
+                    <!-- LOGO UKURAN BARU: W-28 H-28 (112x112) -->
+                    <img src="images/icon-192.png" alt="Logo Studio" class="w-28 h-28 object-cover rounded-lg">
                     <h1 class="text-xl sm:text-2xl font-extrabold text-orange-600">PixelMore Studio</h1>
                 </div>
 
