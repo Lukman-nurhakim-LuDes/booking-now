@@ -45,8 +45,8 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, Timestamp, getDocs, runTransaction, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- KONFIGURASI FIREBASE (DIKEMBALIKAN KE HARDCODED UNTUK STABILITAS LINGKUNGAN INI) ---
-        // Catatan: Di lingkungan produksi, gunakan konfigurasi yang dimuat dari variabel lingkungan.
+        // --- KONFIGURASI FIREBASE (DIPERBAIKI: Mengembalikan hardcode untuk lingkungan Canvas) ---
+        // PENTING: Dalam lingkungan nyata, ini harus menggunakan variabel global __firebase_config
         const firebaseConfig = {
             apiKey: "AIzaSyAKAjjpQHnHs_vQchvbYeuay_ZM1GQSPJc",
             authDomain: "booking-clien.firebaseapp.com",
@@ -57,8 +57,8 @@
         };
         
         // Global Variables
-        // Menggunakan projectId hardcoded sebagai fallback appId
-        const appId = firebaseConfig.projectId;
+        // Menggunakan __app_id jika ada, jika tidak, gunakan projectId sebagai fallback ID
+        const appId = typeof __app_id !== 'undefined' ? __app_id : (firebaseConfig.projectId || 'default-app-id');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --- AKHIR KONFIGURASI FIREBASE ---
 
@@ -79,7 +79,8 @@
             isLoading: true,
             authError: null,
             dataError: null,
-            reportSummary: { totalRevenue: 0, totalBookings: 0, completedBookings: 0, monthlyData: {} }
+            reportSummary: { totalRevenue: 0, totalBookings: 0, completedBookings: 0, monthlyData: {} },
+            isMobileMenuOpen: false // State untuk menu mobile
         };
 
         // Utility Functions
@@ -108,11 +109,6 @@
                 // Set Firestore logging for debugging
                 setLogLevel('debug');
                 
-                // Pengecekan konfigurasi yang lebih sederhana karena kita hardcode untuk lingkungan ini.
-                if (!firebaseConfig.apiKey) {
-                     throw new Error("Firebase configuration API Key is missing.");
-                }
-
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -413,7 +409,7 @@
             const invoiceDate = formatDate(booking.bookingDate || booking.createdAt);
             const invoiceContentId = `invoice-content-${booking.id}`;
 
-            // TIDAK MENGGUNAKAN PLACEHOLDER
+            // Menggunakan URL lokal images/icon-192.png
             const invoiceHTML = `
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
                     <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
@@ -425,8 +421,8 @@
                                     <h3 class="text-3xl font-extrabold text-orange-600">FAKTUR</h3>
                                     <p class="text-sm text-gray-500">PixelMore Studio Management</p>
                                 </div>
-                                <!-- Menggunakan URL lokal images/icon-192.png -->
-                                <img src="images/icon-192.png" alt="Logo Studio" class="w-12 h-12 object-cover rounded-lg">
+                                <!-- Logo ukuran W-16 H-16 (Diperbesar) -->
+                                <img src="images/icon-192.png" alt="Logo Studio" class="w-16 h-16 object-cover rounded-lg">
                             </div>
                             
                             <div class="flex justify-between text-sm mb-6">
@@ -493,6 +489,19 @@
             `;
 
             modalEl.innerHTML = invoiceHTML;
+        };
+
+        // --- Toggle Mobile Menu ---
+        window.toggleMobileMenu = () => {
+            appState.isMobileMenuOpen = !appState.isMobileMenuOpen;
+            const mobileMenu = document.getElementById('mobile-menu');
+            if (appState.isMobileMenuOpen) {
+                mobileMenu.classList.remove('hidden');
+                mobileMenu.classList.add('flex');
+            } else {
+                mobileMenu.classList.add('hidden');
+                mobileMenu.classList.remove('flex');
+            }
         };
 
         // --- Other Rendering Functions (Omitted for brevity, assume they remain similar) ---
@@ -867,29 +876,32 @@
                             ${b.status}
                         </span>
                     </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                        <button onclick="event.stopPropagation(); deleteBooking('${b.id}')" class="text-red-600 hover:text-red-900 ml-2">Hapus</button>
+                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium flex space-x-2 justify-end">
+                        <button onclick="event.stopPropagation(); showInvoice('${b.id}')" class="text-orange-600 hover:text-orange-900">Faktur</button>
+                        <button onclick="event.stopPropagation(); deleteBooking('${b.id}')" class="text-red-600 hover:text-red-900">Hapus</button>
                     </td>
                 </tr>
             `).join('');
 
             return `
                 <div class="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Klien</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paket</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tgl Acara</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            ${tableRows || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Tidak ada data pemesanan yang tersedia.</td></tr>'}
-                        </tbody>
-                    </table>
+                    <div class="overflow-x-auto"> <!-- Kontainer responsif untuk tabel -->
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Klien</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Paket</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tgl Acara</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${tableRows || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Tidak ada data pemesanan yang tersedia.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             `;
         };
@@ -958,10 +970,15 @@
                     const d = date instanceof Date ? date : date.toDate();
                     return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
                 })
-                .reduce((sum, b) => sum + (b.totalPrice || 0), 0);
-        };
+                .reduce((sum, b) => sum + (b.deposit || 0), 0); // Menghitung hanya dari DP/Pembayaran yang masuk bulan ini
+        }
 
         window.switchView = (viewId) => {
+            // Close mobile menu on view switch
+            if (appState.isMobileMenuOpen) {
+                window.toggleMobileMenu();
+            }
+            
             appState.currentView = viewId;
             document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
             document.getElementById(`${viewId}-view`).style.display = 'block';
@@ -994,24 +1011,8 @@
 
         // --- Event Listeners and Setup ---
         window.onload = () => {
-            // PWA / SERVICE WORKER REGISTRATION (DIKOMENTARI UNTUK MENGHINDARI ERROR DI IFRAME)
-            /*
-            if ('serviceWorker' in navigator) {
-                try {
-                    navigator.serviceWorker.register('service-worker.js')
-                        .then(reg => console.log('Service Worker registered.', reg))
-                        .catch(err => {
-                            if (err.message && err.message.includes('protocol of the script (:') && err.name === 'TypeError') {
-                                console.warn('Service Worker registration failed due to sandboxed environment, PWA installability may be affected.');
-                            } else {
-                                console.error('Service Worker registration failed:', err);
-                            }
-                        });
-                } catch (e) {
-                    console.warn("Service Worker registration failed synchronously:", e.message);
-                }
-            }
-            */
+            // NOTE: Service Worker registration is intentionally disabled in this environment
+            // to avoid the "The URL protocol of the script (':') is not supported" error.
 
             initializeAppAndAuth();
             
@@ -1094,11 +1095,11 @@
     <!-- 0. Login View -->
     <div id="login-view" class="hidden fixed inset-0 bg-gray-100 flex items-center justify-center p-4 z-40">
         <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <div class="flex flex-col items-center mb-6">
-                <!-- Logo Menggunakan images/icon-512.png -->
-                <img src="images/icon-512.png" alt="PixelMore Logo" class="w-16 h-16 object-cover rounded-lg mb-2">
-                <h2 class="text-3xl font-bold text-center text-orange-600">PixelMore Studio Login</h2>
+            <div class="flex justify-center mb-6">
+                <!-- Logo ukuran W-20 H-20 (Diperbesar) -->
+                <img src="images/icon-512.png" alt="Logo Studio" class="w-20 h-20 object-cover rounded-xl">
             </div>
+            <h2 class="text-3xl font-bold text-center text-orange-600 mb-6">PixelMore Studio Login</h2>
             <form id="login-form" class="space-y-4">
                 <p class="text-sm text-gray-600 text-center">Silakan login atau daftar untuk mulai menggunakan aplikasi.</p>
                 <div class="space-y-1">
@@ -1121,15 +1122,18 @@
     <!-- Main App Container -->
     <div id="main-app" class="hidden">
         
-        <!-- Header & Navigation -->
+        <!-- Header & Navigation (Responsive) -->
         <header class="bg-white shadow-md sticky top-0 z-10">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+                
                 <div class="flex items-center space-x-2">
-                    <!-- Logo Menggunakan images/icon-192.png -->
-                    <img src="images/icon-192.png" alt="PixelMore Logo" class="w-8 h-8 object-cover rounded-lg">
-                    <h1 class="text-2xl font-extrabold text-gray-800">PixelMore Studio</h1>
+                    <!-- Logo ukuran W-10 H-10 (Diperbesar) -->
+                    <img src="images/icon-192.png" alt="Logo Studio" class="w-10 h-10 object-cover rounded-lg">
+                    <h1 class="text-xl sm:text-2xl font-extrabold text-orange-600">PixelMore Studio</h1>
                 </div>
-                <nav class="flex space-x-6 text-gray-600 items-center">
+
+                <!-- Desktop Navigation -->
+                <nav class="hidden sm:flex space-x-6 text-gray-600 items-center">
                     <button id="nav-dashboard" onclick="switchView('dashboard')" class="nav-link py-2 transition duration-150">Dashboard</button>
                     <button id="nav-calendar" onclick="switchView('calendar')" class="nav-link py-2 transition duration-150">Kalender</button>
                     <button id="nav-bookings" onclick="switchView('bookings')" class="nav-link py-2 transition duration-150">Pemesanan & Faktur</button>
@@ -1137,6 +1141,21 @@
                     <button id="nav-reports" onclick="switchView('reports')" class="nav-link py-2 transition duration-150">Laporan</button>
                     <button onclick="logoutUser()" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150">Logout</button>
                 </nav>
+
+                <!-- Mobile Hamburger Button -->
+                <button onclick="toggleMobileMenu()" class="sm:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                </button>
+            </div>
+            
+            <!-- Mobile Menu Drawer -->
+            <div id="mobile-menu" class="hidden sm:hidden absolute top-full left-0 w-full bg-white shadow-xl flex-col p-4 space-y-2 border-t">
+                <button id="nav-dashboard-mobile" onclick="switchView('dashboard')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Dashboard</button>
+                <button id="nav-calendar-mobile" onclick="switchView('calendar')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Kalender</button>
+                <button id="nav-bookings-mobile" onclick="switchView('bookings')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Pemesanan & Faktur</button>
+                <button id="nav-packages-mobile" onclick="switchView('packages')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Paket Produk</button>
+                <button id="nav-reports-mobile" onclick="switchView('reports')" class="nav-link w-full text-left py-2 px-3 hover:bg-gray-50 rounded-lg">Laporan</button>
+                <button onclick="logoutUser()" class="w-full py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150 mt-4">Logout</button>
             </div>
         </header>
 
@@ -1144,7 +1163,7 @@
         <div id="message-box" class="fixed top-20 right-4 z-50 hidden transition-all duration-300"></div>
         
         <!-- Content Area -->
-        <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <main class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
             <div class="p-6 bg-white rounded-xl shadow-lg min-h-[80vh]">
 
                 <!-- 1. Dashboard View -->
@@ -1161,8 +1180,8 @@
                 <!-- 3. Bookings & Invoice View -->
                 <div id="bookings-view" class="tab-content grid grid-cols-1 lg:grid-cols-3 gap-8">
                     
-                    <!-- New Booking / Edit Form -->
-                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner h-fit sticky top-24">
+                    <!-- New Booking / Edit Form (Sticky on Desktop) -->
+                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner lg:h-fit lg:sticky lg:top-24">
                         <h2 class="text-xl font-bold text-gray-800 mb-4">Buat Pemesanan Baru</h2>
                         <form id="booking-form" class="space-y-4">
                             <input type="hidden" id="booking-id-input">
@@ -1233,8 +1252,8 @@
                 <!-- 4. Packages View -->
                 <div id="packages-view" class="tab-content grid grid-cols-1 lg:grid-cols-4 gap-8">
                     
-                    <!-- Package Form -->
-                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner h-fit sticky top-24">
+                    <!-- Package Form (Sticky on Desktop) -->
+                    <div class="lg:col-span-1 p-6 bg-gray-50 rounded-xl shadow-inner lg:h-fit lg:sticky lg:top-24">
                         <h2 id="package-form-title" class="text-xl font-bold text-gray-800 mb-4">Tambah Paket Produk Baru</h2>
                         <form id="package-form" class="space-y-4">
                             <input type="hidden" id="package-id">
